@@ -43,7 +43,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# 4. LOAD DATA (Dua Sheet Sekaligus)
+# 4. LOAD DATA
 @st.cache_data(ttl=600)
 def load_all_data():
     sheet_id = "1mjjDF1ETjOB_eTI6ChI6dqvg0wf9aCa7cJwx0x2K3No"
@@ -57,12 +57,14 @@ def load_all_data():
     url_audit = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet=database_stokopname"
     df_audit = pd.read_csv(url_audit, low_memory=False)
     
+    # Standarisasi Nama Kolom (Uppercase & Strip)
+    df_audit.columns = [str(c).strip().upper() for c in df_audit.columns]
     return df_stok, df_audit
 
 try:
     df_stok, df_audit = load_all_data()
 
-    # --- SIDEBAR: FILTER & LINK ---
+    # --- SIDEBAR ---
     with st.sidebar:
         st.header("🎯 Global Filter")
         all_dept = sorted(df_stok["DEPARTEMEN"].unique().tolist())
@@ -81,7 +83,6 @@ try:
         st.link_button("📝 Input SO Manual", "https://grandmitra.github.io/inputso/")
         st.link_button("🚚 Anterinlah App", "https://anterinlah.web.app/")
 
-    # --- TABS SISTEM ---
     tab_dashboard, tab_progres = st.tabs(["📊 Executive Dashboard", "📋 Progres Audit (Pivot)"])
 
     # ==========================================
@@ -89,33 +90,22 @@ try:
     # ==========================================
     with tab_dashboard:
         st.title("📦 Sistem Monitoring Stok Opname")
-        
-        # Filter Logic untuk Dashboard
         mask = df_stok["DEPARTEMEN"].isin(dept_filter)
         df_selection = df_stok[mask]
         
         c1, c2, c3, c4 = st.columns(4)
-        total_val_selling = df_selection["VALSELLING"].sum()
-        total_selisih_qty = df_selection["QTYSELISIH"].sum()
-        total_selisih_val = df_selection["SELISIHVALSELLING"].sum()
-        
         c1.metric("Total SKU", f"{len(df_selection):,}")
-        c2.metric("Total Value (Selling)", f"Rp {total_val_selling:,.0f}")
-        c3.metric("Total Selisih Qty", f"{total_selisih_qty:,}", delta_color="inverse")
-        c4.metric("Total Selisih Value", f"Rp {total_selisih_val:,.0f}", delta_color="inverse")
+        c2.metric("Total Value", f"Rp {df_selection['VALSELLING'].sum():,.0f}")
+        c3.metric("Selisih Qty", f"{df_selection['QTYSELISIH'].sum():,}")
+        c4.metric("Selisih Value", f"Rp {df_selection['SELISIHVALSELLING'].sum():,.0f}")
 
         st.markdown("---")
         col_left, col_right = st.columns([6, 4])
         with col_left:
-            dept_summary = df_selection.groupby("DEPARTEMEN")[["SELISIHVALSELLING"]].sum().sort_values(by="SELISIHVALSELLING", ascending=True).reset_index()
-            fig_dept = px.bar(dept_summary, x="SELISIHVALSELLING", y="DEPARTEMEN", orientation='h', title="<b>Nilai Selisih per Departemen</b>", color="SELISIHVALSELLING", color_continuous_scale="RdBu")
-            st.plotly_chart(fig_dept, use_container_width=True)
+            dept_sum = df_selection.groupby("DEPARTEMEN")[["SELISIHVALSELLING"]].sum().reset_index()
+            st.plotly_chart(px.bar(dept_sum, x="SELISIHVALSELLING", y="DEPARTEMEN", orientation='h', title="Selisih per Dept"), use_container_width=True)
         with col_right:
-            fig_status = px.pie(df_selection, names='STATUSSELISIH', values='VALSELLING', title='<b>Persentase Status Stok</b>', hole=0.5)
-            st.plotly_chart(fig_status, use_container_width=True)
-
-        st.subheader("📋 Rincian Database Stok")
-        st.dataframe(df_selection, use_container_width=True)
+            st.plotly_chart(px.pie(df_selection, names='STATUSSELISIH', values='VALSELLING', title='Status Stok', hole=0.5), use_container_width=True)
 
     # ==========================================
     # TAB 2: PROGRES AUDIT (PIVOT SEJAJAR)
@@ -123,79 +113,65 @@ try:
     with tab_progres:
         st.title("🔍 Audit Progress & Pivot Analysis")
         
-        # Filter Khusus Tab Progres
+        # Identifikasi kolom yang tersedia secara fleksibel
+        cols = df_audit.columns
+        COL_TITIK = "TITIKLOKASI" if "TITIKLOKASI" in cols else cols[0]
+        COL_SEBARAN = "SEBARANLOKASI" if "SEBARANLOKASI" in cols else cols[0]
+        
         col_search, col_lok = st.columns([2, 1])
         with col_search:
-            search_query = st.text_input("🔍 Cari Barcode atau Nama Barang...", placeholder="Ketik di sini...")
+            search_query = st.text_input("🔍 Cari Barcode atau Nama Barang...", key="audit_search")
         with col_lok:
             all_lok_audit = sorted(df_audit["LOKASI"].unique().astype(str).tolist())
             lok_filter = st.multiselect("📍 Filter By Lokasi:", options=all_lok_audit, default=all_lok_audit)
 
-        # Proses Data Pivot
-        df_audit['QTYFISIK'] = pd.to_numeric(df_audit['QTYFISIK'], errors='coerce').fillna(0)
-        df_audit['QTYTEORI'] = pd.to_numeric(df_audit['QTYTEORI'], errors='coerce').fillna(0)
-        df_audit['VAL_SELISIH_JUAL'] = pd.to_numeric(df_audit['VAL_SELISIH_JUAL'], errors='coerce').fillna(0)
+        # Pre-processing Numerik
+        for col in ['QTYFISIK', 'QTYTEORI', 'VAL_SELISIH_JUAL']:
+            if col in df_audit.columns:
+                df_audit[col] = pd.to_numeric(df_audit[col], errors='coerce').fillna(0)
 
         # Pivot Table
+        # Menggunakan kolom yang sudah divalidasi (TITIKLOKASI, SEBARANLOKASI)
         df_pivot = df_audit.pivot_table(
-            index=['BARCODE_KODE', 'DESKRIPSI', 'DEPARTEMEN', 'LOKASI', 'TITIKLOKASISEBARAN', 'NAMA_PETUGAS', 'QTYTEORI'],
+            index=['BARCODE_KODE', 'DESKRIPSI', 'DEPARTEMEN', 'LOKASI', COL_TITIK, COL_SEBARAN, 'NAMA_PETUGAS', 'QTYTEORI'],
             columns='JENIS_PENGHITUNG',
             values=['QTYFISIK', 'VAL_SELISIH_JUAL'],
-            aggfunc={'QTYFISIK': 'sum', 'VAL_SELISIH_JUAL': 'sum'}
+            aggfunc='sum'
         ).fillna(0)
 
         # Flatten Columns
         df_pivot.columns = [f"{col}_{type}" for col, type in df_pivot.columns]
         df_pivot = df_pivot.reset_index()
 
-        # Ensure P1, P2, P3 columns exist
+        # Proteksi Kolom P1, P2, P3
         for p in ['P1', 'P2', 'P3']:
             if f'QTYFISIK_{p}' not in df_pivot.columns: df_pivot[f'QTYFISIK_{p}'] = 0
             if f'VAL_SELISIH_JUAL_{p}' not in df_pivot.columns: df_pivot[f'VAL_SELISIH_JUAL_{p}'] = 0
 
-        # Logika QTY SELISIH & KETERANGAN (V14)
+        # Logika Status SO V14
         def process_audit(row):
             q1, q2, q3 = row['QTYFISIK_P1'], row['QTYFISIK_P2'], row['QTYFISIK_P3']
-            val1, val2, val3 = row['VAL_SELISIH_JUAL_P1'], row['VAL_SELISIH_JUAL_P2'], row['VAL_SELISIH_JUAL_P3']
-            
-            if q3 != 0: 
-                qty_fin, val_fin, ket = q3, val3, "DONE (P3)"
-            elif q1 == q2 and q1 != 0: 
-                qty_fin, val_fin, ket = q1, val1, "DONE (MATCH)"
-            elif q1 != q2: 
-                qty_fin, val_fin, ket = 0, 0, "MISMATCH (WAIT P3)"
-            else: 
-                qty_fin, val_fin, ket = 0, 0, "INCOMPLETE"
-                
-            return qty_fin, qty_fin - row['QTYTEORI'], val_fin, ket
+            if q3 != 0: return q3, q3 - row['QTYTEORI'], "DONE (P3)"
+            if q1 == q2 and q1 != 0: return q1, q1 - row['QTYTEORI'], "DONE (MATCH)"
+            if q1 != q2: return 0, 0, "MISMATCH (WAIT P3)"
+            return 0, 0, "INCOMPLETE"
 
-        df_pivot[['FINAL_FISIK', 'QTYSELISIH', 'VAL_SELISIH_FINAL', 'KETERANGAN']] = df_pivot.apply(
+        df_pivot[['FINAL_FISIK', 'QTYSELISIH', 'KETERANGAN']] = df_pivot.apply(
             lambda x: pd.Series(process_audit(x)), axis=1
         )
 
-        # Apply Tab Filters
+        # Apply Filters
         mask_audit = df_pivot["LOKASI"].astype(str).isin(lok_filter)
         if search_query:
-            mask_audit = mask_audit & (
-                df_pivot["BARCODE_KODE"].astype(str).str.contains(search_query, case=False) | 
-                df_pivot["DESKRIPSI"].str.contains(search_query, case=False)
-            )
-        df_audit_filtered = df_pivot[mask_audit]
+            mask_audit = mask_audit & (df_pivot["BARCODE_KODE"].astype(str).str.contains(search_query, case=False) | df_pivot["DESKRIPSI"].str.contains(search_query, case=False))
+        
+        df_final = df_pivot[mask_audit]
 
-        # Display Pivot
-        st.write(f"Menampilkan {len(df_audit_filtered)} baris hasil audit.")
         st.dataframe(
-            df_audit_filtered[[
-                'BARCODE_KODE', 'DESKRIPSI', 'LOKASI', 'NAMA_PETUGAS', 
-                'QTYTEORI', 'QTYFISIK_P1', 'QTYFISIK_P2', 'QTYFISIK_P3', 
-                'QTYSELISIH', 'VAL_SELISIH_FINAL', 'KETERANGAN'
-            ]], 
-            use_container_width=True,
-            column_config={
-                "QTYSELISIH": st.column_config.NumberColumn("Selisih Qty", format="%d"),
-                "VAL_SELISIH_FINAL": st.column_config.NumberColumn("Val Selisih", format="Rp %d")
-            }
+            df_final[['BARCODE_KODE', 'DESKRIPSI', 'LOKASI', COL_TITIK, COL_SEBARAN, 'NAMA_PETUGAS', 'QTYTEORI', 'QTYFISIK_P1', 'QTYFISIK_P2', 'QTYFISIK_P3', 'QTYSELISIH', 'KETERANGAN']],
+            use_container_width=True
         )
 
 except Exception as e:
     st.error(f"Terjadi kesalahan teknis: {e}")
+    st.info("Pastikan kolom TITIKLOKASI dan SEBARANLOKASI tersedia di sheet database_stokopname.")
