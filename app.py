@@ -54,6 +54,7 @@ def load_all_data():
     df_audit = pd.read_csv(url_audit, low_memory=False)
     
     df_stok = df_stok.fillna({'DEPARTEMEN': 'Tanpa Dept', 'LOKASI': 'Tanpa Lokasi', 'STATUSSELISIH': 'Sesuai'})
+    # Normalisasi Header
     df_audit.columns = [str(c).strip().upper() for c in df_audit.columns]
     
     return df_stok, df_audit
@@ -61,15 +62,24 @@ def load_all_data():
 try:
     df_stok, df_audit = load_all_data()
 
+    # Penyesuaian Nama Kolom Harga (Handle HARGAJUAL vs HARGA_JUAL)
+    col_harga = "HARGAJUAL" if "HARGAJUAL" in df_audit.columns else ("HARGA_JUAL" if "HARGA_JUAL" in df_audit.columns else None)
+
     # Pre-processing Numerik
-    for col in ['QTYFISIK', 'QTYTEORI', 'VAL_SELISIH_JUAL', 'HARGA_JUAL']:
+    num_cols = ['QTYFISIK', 'QTYTEORI', 'VAL_SELISIH_JUAL']
+    if col_harga: num_cols.append(col_harga)
+    
+    for col in num_cols:
         if col in df_audit.columns:
             df_audit[col] = pd.to_numeric(df_audit[col], errors='coerce').fillna(0)
     
-    # Tambahkan hitungan Nilai Teori (Harga Jual * Qty Teori)
-    df_audit['VAL_TEORI'] = df_audit['HARGA_JUAL'] * df_audit['QTYTEORI']
+    # Hitung VAL_TEORI
+    if col_harga:
+        df_audit['VAL_TEORI'] = df_audit[col_harga] * df_audit['QTYTEORI']
+    else:
+        df_audit['VAL_TEORI'] = 0
 
-    # Transformasi Pivot Dasar
+    # 5. TRANSFORMASI PIVOT
     df_pivot = df_audit.pivot_table(
         index=['BARCODE_KODE', 'DESKRIPSI', 'DEPARTEMEN', 'LOKASI', 'QTYTEORI', 'VAL_TEORI'],
         columns='JENIS_PENGHITUNG',
@@ -84,45 +94,51 @@ try:
     df_pivot.columns = [f"{col}_{type}" for col, type in df_pivot.columns]
     df_pivot = df_pivot.reset_index()
 
-    # Proteksi Kolom
+    # Proteksi Kolom Eksistensi
     for p in ['P1', 'P2', 'P3']:
-        if f'QTYFISIK_{p}' not in df_pivot.columns: df_pivot[f'QTYFISIK_{p}'] = 0
-        if f'VAL_SELISIH_JUAL_{p}' not in df_pivot.columns: df_pivot[f'VAL_SELISIH_JUAL_{p}'] = 0
-        if f'NAMA_PETUGAS_{p}' not in df_pivot.columns: df_pivot[f'NAMA_PETUGAS_{p}'] = "-"
+        for field in ['QTYFISIK', 'VAL_SELISIH_JUAL', 'NAMA_PETUGAS']:
+            col_name = f'{field}_{p}'
+            if col_name not in df_pivot.columns:
+                df_pivot[col_name] = 0 if field != 'NAMA_PETUGAS' else "-"
 
     # Logika Final Per Item
-    def process_logic(row):
+    def process_item(row):
         q1, q2, q3 = row['QTYFISIK_P1'], row['QTYFISIK_P2'], row['QTYFISIK_P3']
-        v1, v2, v3 = row['VAL_SELISIH_JUAL_P1'], row['VAL_SELISIH_JUAL_P2'], row['VAL_SELISIH_JUAL_P3']
+        v1, v3 = row['VAL_SELISIH_JUAL_P1'], row['VAL_SELISIH_JUAL_P3']
         
-        # Final Fisik & Nilai Selisih
+        # Final Fisik & Nilai Selisih (Prioritas P3)
         final_f = q3 if q3 != 0 else (q1 if q1 != 0 else 0)
         final_v_selisih = v3 if q3 != 0 else (v1 if q1 != 0 else 0)
         
-        # Gabungan Petugas
-        all_n = [str(row['NAMA_PETUGAS_P1']), str(row['NAMA_PETUGAS_P2']), str(row['NAMA_PETUGAS_P3'])]
-        clean_n = ', '.join(sorted(set([n for n in all_n if n not in ["-", "0", "0.0", "nan"]])))
+        # Gabungan Petugas (P1, P2, P3)
+        names = [str(row['NAMA_PETUGAS_P1']), str(row['NAMA_PETUGAS_P2']), str(row['NAMA_PETUGAS_P3'])]
+        clean_names = ', '.join(sorted(set([n for n in names if n not in ["-", "0", "0.0", "nan", "None"]])))
         
-        return final_f, final_v_selisih, clean_n
+        return final_f, final_v_selisih, clean_names
 
     df_pivot[['FINAL_FISIK', 'FINAL_VAL_SELISIH', 'GABUNGAN_PETUGAS']] = df_pivot.apply(
-        lambda x: pd.Series(process_logic(x)), axis=1
+        lambda x: pd.Series(process_item(x)), axis=1
     )
 
     # --- TABS ---
     tab_dash, tab_prog, tab_res = st.tabs(["📊 Dashboard", "📋 Progres Audit", "📡 Monitoring RESUME"])
 
-    # TAB 1 & 2 tetap seperti sebelumnya (Skip detail untuk singkatnya)
+    # TAB 1: EXECUTIVE DASHBOARD
+    with tab_dash:
+        st.title("📦 Monitoring Dashboard")
+        # (Isi dashboard stok tetap seperti sebelumnya)
+        st.dataframe(df_stok, use_container_width=True)
+
+    # TAB 2: PROGRES AUDIT
     with tab_prog:
-        st.dataframe(df_pivot, use_container_width=True)
+        st.title("📋 Detail Per Item")
+        st.dataframe(df_pivot[['BARCODE_KODE', 'DESKRIPSI', 'LOKASI', 'QTYTEORI', 'QTYFISIK_P1', 'QTYFISIK_P2', 'QTYFISIK_P3', 'FINAL_VAL_SELISIH', 'GABUNGAN_PETUGAS']], use_container_width=True)
 
-    # ==========================================
     # TAB 3: MONITORING RESUME (ADVANCED)
-    # ==========================================
     with tab_res:
-        st.title("📡 Monitoring Resume Per Lokasi")
+        st.title("📡 Monitoring Per Lokasi")
 
-        # Agregasi Data Per Lokasi
+        # Agregasi Resume Per Lokasi
         df_res_loc = df_pivot.groupby('LOKASI').agg({
             'BARCODE_KODE': 'count',
             'VAL_TEORI': 'sum',
@@ -132,44 +148,38 @@ try:
         }).reset_index()
         
         df_res_loc.columns = ['LOKASI', 'COUNT_SKU', 'TOTAL_VAL_TEORI', 'VAL_SELISIH_P3', 'TOTAL_SELISIH_FINAL', 'PETUGAS_LOKASI']
-        
-        # Cleaning Petugas String
         df_res_loc['PETUGAS_LOKASI'] = df_res_loc['PETUGAS_LOKASI'].str.strip(', ')
 
-        # --- SCORE CARDS (VAL SELISIH) ---
-        st.write("### 📈 Ringkasan Nilai Selisih (Final)")
+        # --- SCORE CARDS ---
+        st.write("### 📈 Ringkasan Nilai Selisih Final")
         sc1, sc2, sc3 = st.columns(3)
         
         pos_val = df_res_loc[df_res_loc['TOTAL_SELISIH_FINAL'] > 0]['TOTAL_SELISIH_FINAL'].sum()
         neg_val = df_res_loc[df_res_loc['TOTAL_SELISIH_FINAL'] < 0]['TOTAL_SELISIH_FINAL'].sum()
         total_balance = df_res_loc['TOTAL_SELISIH_FINAL'].sum()
 
-        sc1.metric("➕ Selisih Positif (Lebih)", f"Rp {pos_val:,.0f}", delta_color="normal")
-        sc2.metric("➖ Selisih Negatif (Kurang)", f"Rp {neg_val:,.0f}", delta_color="inverse")
+        sc1.metric("➕ Selisih Positif", f"Rp {pos_val:,.0f}")
+        sc2.metric("➖ Selisih Negatif", f"Rp {neg_val:,.0f}", delta_color="inverse")
         sc3.metric("⚖️ Net Balance", f"Rp {total_balance:,.0f}")
 
-        # --- FILTER RESUME ---
+        # --- FILTER & TABLE ---
         st.markdown("---")
-        f_col1, f_col2 = st.columns([1, 2])
-        with f_col1:
-            status_filter = st.radio("Filter Tipe Selisih:", ["Semua", "Hanya Selisih", "Balance (0)"], horizontal=True)
+        status_filter = st.radio("Tampilkan Lokasi:", ["Semua", "Hanya Selisih", "Balance (0)"], horizontal=True)
         
-        # Logika Filter
         if status_filter == "Hanya Selisih":
             df_res_loc = df_res_loc[df_res_loc['TOTAL_SELISIH_FINAL'] != 0]
         elif status_filter == "Balance (0)":
             df_res_loc = df_res_loc[df_res_loc['TOTAL_SELISIH_FINAL'] == 0]
 
-        # --- TABEL RESUME FINAL ---
         st.dataframe(
             df_res_loc,
             use_container_width=True,
             column_config={
-                "COUNT_SKU": st.column_config.NumberColumn("Jml SKU", format="%d 📦"),
+                "COUNT_SKU": "Jml SKU",
                 "TOTAL_VAL_TEORI": st.column_config.NumberColumn("Val Teori", format="Rp %d"),
-                "VAL_SELISIH_P3": st.column_config.NumberColumn("Val Selisih P3", format="Rp %d"),
+                "VAL_SELISIH_P3": st.column_config.NumberColumn("Val P3", format="Rp %d"),
                 "TOTAL_SELISIH_FINAL": st.column_config.NumberColumn("Total Selisih", format="Rp %d"),
-                "PETUGAS_LOKASI": st.column_config.TextColumn("👤 Petugas (Joined)")
+                "PETUGAS_LOKASI": "👤 Petugas"
             }
         )
 
