@@ -34,17 +34,28 @@ def check_password():
 if not check_password():
     st.stop()
 
-# 3. CSS KUSTOM
+# 3. CSS KUSTOM (Untuk Animasi & Badge)
 st.markdown("""
     <style>
     .main { background-color: #f5f7f9; }
     .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
     [data-testid="stSidebar"] .stElementContainer button { width: 100% !important; }
+    
+    /* Animasi Status */
+    .status-done { color: #ffffff; background-color: #28a745; padding: 4px 8px; border-radius: 5px; font-weight: bold; animation: pulse 2s infinite; }
+    .status-empty { color: #ffffff; background-color: #dc3545; padding: 4px 8px; border-radius: 5px; font-weight: bold; }
+    .status-complete { color: #ffffff; background-color: #007bff; padding: 4px 8px; border-radius: 5px; font-weight: bold; border: 2px solid #0056b3; }
+    
+    @keyframes pulse {
+        0% { opacity: 1; }
+        50% { opacity: 0.5; }
+        100% { opacity: 1; }
+    }
     </style>
     """, unsafe_allow_html=True)
 
 # 4. LOAD DATA
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=300)
 def load_all_data():
     sheet_id = "1mjjDF1ETjOB_eTI6ChI6dqvg0wf9aCa7cJwx0x2K3No"
     url_stok = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet=database_stok"
@@ -63,103 +74,119 @@ try:
 
     # --- SIDEBAR ---
     with st.sidebar:
-        st.header("🎯 Global Filter")
+        st.header("🎯 Filter Global")
         all_dept = sorted(df_stok["DEPARTEMEN"].unique().tolist())
-        dept_filter = st.multiselect("Filter Departemen:", options=all_dept, default=all_dept)
+        dept_filter = st.multiselect("Pilih Departemen:", options=all_dept, default=all_dept)
         
         st.markdown("---")
-        st.header("🔗 Progress Monitoring")
-        st.link_button("🚀 Progress 1", "https://script.google.com/macros/s/AKfycbzy2LxYk5lZHDyLav1MD7RZj6bR8R2LGwHQRVQaftTgXI00iFMzX7jp-37iz-mra8GXKg/exec")
-        st.link_button("🚀 Progress 2", "https://script.google.com/macros/s/AKfycbxWEUlPuofOGeDgGaEo1qh9QP0vs9f5NZju0WwKnnT-y3jrRpUhuBghORQPNQQRw7Ef/exec")
-        st.link_button("🚀 Progress 3", "https://script.google.com/macros/s/AKfycbwYchGDTxUWDwoEVxHPrBKxsuIOQOCiyUTq02SdJ93gpgVSRlXerkSM2UnfLPxxPxvc/exec")
+        st.header("🛠️ Sistem Pendukung")
+        st.link_button("🔍 Unlisting Product", "https://grandmitra.github.io/unlisting/")
+        st.link_button("🕵️ Lost Code Hunt", "https://grandmitra.github.io/lostcodehunt/")
+        st.link_button("📝 Input SO Manual", "https://grandmitra.github.io/inputso/")
+        st.link_button("🚚 Anterinlah App", "https://anterinlah.web.app/")
 
-    tab_dashboard, tab_progres = st.tabs(["📊 Executive Dashboard", "📋 Progres Audit (Pivot)"])
+    # Pre-processing Data Audit
+    df_audit['QTYFISIK'] = pd.to_numeric(df_audit['QTYFISIK'], errors='coerce').fillna(0)
+    df_audit['QTYTEORI'] = pd.to_numeric(df_audit['QTYTEORI'], errors='coerce').fillna(0)
 
-    # --- TAB 1: DASHBOARD ---
-    with tab_dashboard:
-        mask = df_stok["DEPARTEMEN"].isin(dept_filter)
-        df_selection = df_stok[mask]
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Total SKU", f"{len(df_selection):,}")
-        c2.metric("Total Value", f"Rp {df_selection['VALSELLING'].sum():,.0f}")
-        c3.metric("Selisih Qty", f"{df_selection['QTYSELISIH'].sum():,}")
-        c4.metric("Selisih Value", f"Rp {df_selection['SELISIHVALSELLING'].sum():,.0f}")
-        st.dataframe(df_selection, use_container_width=True)
+    # Transformasi Pivot (Join Petugas & Sejajarkan P1-P3)
+    df_pivot = df_audit.pivot_table(
+        index=['BARCODE_KODE', 'DESKRIPSI', 'DEPARTEMEN', 'LOKASI', 'QTYTEORI'],
+        columns='JENIS_PENGHITUNG',
+        values=['QTYFISIK', 'NAMA_PETUGAS'],
+        aggfunc={'QTYFISIK': 'sum', 'NAMA_PETUGAS': lambda x: ', '.join(sorted(set(x.astype(str))))}
+    ).fillna(0)
 
-    # --- TAB 2: PROGRES AUDIT (NAMA_PETUGAS JOINED) ---
-    with tab_progres:
-        st.title("🔍 Audit Progress (Joined Data)")
+    df_pivot.columns = [f"{col}_{type}" for col, type in df_pivot.columns]
+    df_pivot = df_pivot.reset_index()
+
+    # Pastikan Kolom Eksis
+    for p in ['P1', 'P2', 'P3']:
+        if f'QTYFISIK_{p}' not in df_pivot.columns: df_pivot[f'QTYFISIK_{p}'] = 0
+        if f'NAMA_PETUGAS_{p}' not in df_pivot.columns: df_pivot[f'NAMA_PETUGAS_{p}'] = "-"
+
+    # 5. LOGIKA BARU: SELISIH & MATCH/UNMATCH
+    def process_logic(row):
+        q1, q2, q3 = row['QTYFISIK_P1'], row['QTYFISIK_P2'], row['QTYFISIK_P3']
+        teori = row['QTYTEORI']
         
-        # Kolom dinamis berdasarkan upload kamu
-        cols = df_audit.columns
-        COL_TITIK = "TITIKLOKASI" if "TITIKLOKASI" in cols else cols[0]
-        COL_SEBARAN = "SEBARANLOKASI" if "SEBARANLOKASI" in cols else cols[0]
+        # Penentuan QTY FISIK FINAL
+        final_fisik = q3 if q3 != 0 else (q1 if q1 != 0 else 0)
+        selisih = teori - final_fisik # Rumus: Teori - Fisik
+        
+        # Penentuan Keterangan Match
+        if q1 == 0 and q2 == 0: ket = "BELUM INPUT"
+        elif q1 == q2: ket = "MATCH"
+        else: ket = "UNMATCH"
+        
+        # Override jika ada P3
+        if q3 != 0: ket = "DONE (ADJUSTED P3)"
+            
+        return final_fisik, selisih, ket
 
-        # Filter di Tab Progres
+    df_pivot[['FINAL_FISIK', 'QTYSELISIH', 'KETERANGAN']] = df_pivot.apply(
+        lambda x: pd.Series(process_logic(x)), axis=1
+    )
+
+    # --- TABS SISTEM ---
+    tab_dash, tab_prog, tab_res = st.tabs(["📊 Dashboard", "📋 Progres Audit", "📡 Monitoring RESUME"])
+
+    # TAB 1: DASHBOARD
+    with tab_dash:
+        mask = df_stok["DEPARTEMEN"].isin(dept_filter)
+        df_sel = df_stok[mask]
+        st.title("📦 Executive Summary")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Total SKU", f"{len(df_sel):,}")
+        c2.metric("Total Value", f"Rp {df_sel['VALSELLING'].sum():,.0f}")
+        c3.metric("Total Selisih", f"{df_sel['QTYSELISIH'].sum():,}")
+        st.dataframe(df_sel, use_container_width=True)
+
+    # TAB 2: PROGRES AUDIT
+    with tab_prog:
+        st.title("📋 Detail Per Item (Pivot)")
         col_search, col_lok = st.columns([2, 1])
         with col_search:
-            search_query = st.text_input("🔍 Cari Barcode/Deskripsi...", key="audit_search")
+            s_query = st.text_input("🔍 Cari Barcode/Barang:", key="p_search")
         with col_lok:
-            all_lok_audit = sorted(df_audit["LOKASI"].unique().astype(str).tolist())
-            lok_filter = st.multiselect("📍 Filter Lokasi:", options=all_lok_audit, default=all_lok_audit)
+            l_filt = st.multiselect("📍 Lokasi:", options=sorted(df_pivot["LOKASI"].unique()), default=df_pivot["LOKASI"].unique())
+        
+        df_prog_filt = df_pivot[df_pivot["LOKASI"].isin(l_filt)]
+        if s_query:
+            df_prog_filt = df_prog_filt[df_prog_filt["DESKRIPSI"].str.contains(s_query, case=False) | df_prog_filt["BARCODE_KODE"].astype(str).str.contains(s_query)]
+        
+        st.dataframe(df_prog_filt[['BARCODE_KODE', 'DESKRIPSI', 'LOKASI', 'QTYTEORI', 'QTYFISIK_P1', 'QTYFISIK_P2', 'QTYFISIK_P3', 'QTYSELISIH', 'KETERANGAN']], use_container_width=True)
 
-        # Pre-processing Data
-        df_audit['QTYFISIK'] = pd.to_numeric(df_audit['QTYFISIK'], errors='coerce').fillna(0)
-        df_audit['QTYTEORI'] = pd.to_numeric(df_audit['QTYTEORI'], errors='coerce').fillna(0)
-        df_audit['NAMA_PETUGAS'] = df_audit['NAMA_PETUGAS'].astype(str).replace('nan', '-')
-
-        # 5. LOGIKA PIVOT DENGAN JOIN NAMA PETUGAS
-        # Kita groupby dulu untuk menggabungkan Nama Petugas per Barcode & Lokasi
-        df_grouped = df_audit.groupby(['BARCODE_KODE', 'DESKRIPSI', 'DEPARTEMEN', 'LOKASI', COL_TITIK, COL_SEBARAN, 'QTYTEORI', 'JENIS_PENGHITUNG']).agg({
-            'QTYFISIK': 'sum',
-            'NAMA_PETUGAS': lambda x: ', '.join(sorted(set(x))) # Menggabungkan nama unik dengan koma
+    # TAB 3: MONITORING RESUME (NEW)
+    with tab_res:
+        st.title("📡 Status Penginputan Per Lokasi")
+        
+        # Aggregate data per LOKASI
+        df_resume = df_pivot.groupby('LOKASI').agg({
+            'QTYFISIK_P1': lambda x: 'DONE' if (x != 0).any() else 'EMPTY',
+            'QTYFISIK_P2': lambda x: 'DONE' if (x != 0).any() else 'EMPTY',
+            'QTYFISIK_P3': lambda x: 'DONE' if (x != 0).any() else 'EMPTY'
         }).reset_index()
 
-        # Sekarang Pivot untuk menyejajarkan P1, P2, P3
-        df_pivot = df_grouped.pivot_table(
-            index=['BARCODE_KODE', 'DESKRIPSI', 'DEPARTEMEN', 'LOKASI', COL_TITIK, COL_SEBARAN, 'QTYTEORI'],
-            columns='JENIS_PENGHITUNG',
-            values=['QTYFISIK', 'NAMA_PETUGAS'],
-            aggfunc={'QTYFISIK': 'sum', 'NAMA_PETUGAS': lambda x: ' / '.join(x)}
-        ).fillna(0)
+        def get_final_status(row):
+            if row['QTYFISIK_P1'] == 'DONE' and row['QTYFISIK_P2'] == 'DONE' and row['QTYFISIK_P3'] == 'DONE':
+                return 'COMPLETE'
+            return 'IN PROGRESS'
 
-        # Perbaikan Nama Kolom Hasil Pivot
-        df_pivot.columns = [f"{col}_{type}" for col, type in df_pivot.columns]
-        df_pivot = df_pivot.reset_index()
+        df_resume['OVERALL_STATUS'] = df_resume.apply(get_final_status, axis=1)
 
-        # Proteksi Kolom Nama Petugas & QTY
-        for p in ['P1', 'P2', 'P3']:
-            if f'QTYFISIK_{p}' not in df_pivot.columns: df_pivot[f'QTYFISIK_{p}'] = 0
-            if f'NAMA_PETUGAS_{p}' not in df_pivot.columns: df_pivot[f'NAMA_PETUGAS_{p}'] = "-"
-
-        # Logika Status SO & Final Nama
-        def process_audit_joined(row):
-            q1, q2, q3 = row['QTYFISIK_P1'], row['QTYFISIK_P2'], row['QTYFISIK_P3']
-            # Gabungkan semua petugas yang terlibat di P1, P2, dan P3
-            all_names = [str(row['NAMA_PETUGAS_P1']), str(row['NAMA_PETUGAS_P2']), str(row['NAMA_PETUGAS_P3'])]
-            names_clean = ', '.join(sorted(set([n for n in all_names if n not in ["-", "0", "0.0"]])))
-            
-            if q3 != 0: return q3, q3 - row['QTYTEORI'], "DONE (P3)", names_clean
-            if q1 == q2 and q1 != 0: return q1, q1 - row['QTYTEORI'], "DONE (MATCH)", names_clean
-            if q1 != q2: return 0, 0, "MISMATCH (WAIT P3)", names_clean
-            return 0, 0, "INCOMPLETE", names_clean
-
-        df_pivot[['FINAL_FISIK', 'QTYSELISIH', 'KETERANGAN', 'GABUNGAN_PETUGAS']] = df_pivot.apply(
-            lambda x: pd.Series(process_audit_joined(x)), axis=1
-        )
-
-        # Apply Global Filters
-        mask_audit = df_pivot["LOKASI"].astype(str).isin(lok_filter)
-        if search_query:
-            mask_audit = mask_audit & (df_pivot["BARCODE_KODE"].astype(str).str.contains(search_query, case=False) | df_pivot["DESKRIPSI"].str.contains(search_query, case=False))
+        # Tampilan Bergaya Card/Table dengan Emoji & Badge
+        st.write("### Monitoring Real-Time Lokasi")
         
-        df_final = df_pivot[mask_audit]
-
-        # Tampilkan Kolom
-        st.dataframe(
-            df_final[['BARCODE_KODE', 'DESKRIPSI', 'LOKASI', COL_TITIK, 'GABUNGAN_PETUGAS', 'QTYTEORI', 'QTYFISIK_P1', 'QTYFISIK_P2', 'QTYFISIK_P3', 'QTYSELISIH', 'KETERANGAN']],
-            use_container_width=True
-        )
+        # Konfigurasi Tampilan Kolom agar Animasi Terlihat
+        st.table(df_resume.style.applymap(lambda x: 
+            'background-color: #28a745; color: white' if x == 'DONE' else (
+            'background-color: #dc3545; color: white' if x == 'EMPTY' else (
+            'background-color: #007bff; color: white' if x == 'COMPLETE' else '')),
+            subset=['QTYFISIK_P1', 'QTYFISIK_P2', 'QTYFISIK_P3', 'OVERALL_STATUS']
+        ))
+        
+        st.info("💡 Keterangan: DONE (Hijau), EMPTY (Merah), COMPLETE (Biru - Semua P1-P3 terisi)")
 
 except Exception as e:
     st.error(f"Terjadi kesalahan teknis: {e}")
