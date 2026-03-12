@@ -70,7 +70,7 @@ df_pivot = df_audit.pivot_table(
 for p in ['P1', 'P2', 'P3']:
     if p not in df_pivot.columns: df_pivot[p] = 0
 
-df_pivot['SELISIH'] = df_pivot.apply(lambda r: (r['P3'] if r['P3'] != 0 else r['P1'])-r['QTYTEORI'], axis=1)
+df_pivot['SELISIH'] = df_pivot.apply(lambda r: r['P3']-r['QTYTEORI'], axis=1)
 
 # --- UI TABS ---
 tab_dash, tab_prog, tab_res = st.tabs(["📊 Dashboard Lokasi", "📋 Audit Pivot Detail", "📡 Live Tracking Progress"])
