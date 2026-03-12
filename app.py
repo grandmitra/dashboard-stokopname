@@ -2,99 +2,123 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-# Konfigurasi Halaman
+# 1. Menaikkan limit render Pandas agar tidak error pada 18k+ baris
+pd.set_option("styler.render.max_elements", 1000000)
+
 st.set_page_config(page_title="Dashboard Stok Opname", layout="wide")
 
-# Fungsi untuk memuat data dari Google Sheets
-@st.cache_data
+# CSS Kustom untuk tampilan lebih elegant
+st.markdown("""
+    <style>
+    .main { background-color: #f5f7f9; }
+    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    </style>
+    """, unsafe_allow_html=True)
+
+@st.cache_data(ttl=600) # Data disimpan di cache selama 10 menit
 def load_data():
     sheet_id = "1mjjDF1ETjOB_eTI6ChI6dqvg0wf9aCa7cJwx0x2K3No"
     sheet_name = "database_stok"
     url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
-    df = pd.read_csv(url)
-    return df
+    df = pd.read_csv(url, low_memory=False)
+    
+    # Pembersihan data dasar
+    fill_values = {'DEPARTEMEN': 'Tanpa Dept', 'LOKASI': 'Tanpa Lokasi', 'STATUSSELISIH': 'Sesuai'}
+    return df.fillna(value=fill_values)
 
 try:
     df = load_data()
 
     # --- SIDEBAR FILTER ---
-    st.sidebar.header("Filter Data")
+    st.sidebar.header("🎯 Filter Panel")
     
-    dept_filter = st.sidebar.multiselect(
-        "Pilih Departemen:", 
-        options=df["DEPARTEMEN"].unique(), 
-        default=df["DEPARTEMEN"].unique()
-    )
+    # Filter Departemen
+    all_dept = sorted(df["DEPARTEMEN"].unique().tolist())
+    dept_filter = st.sidebar.multiselect("Pilih Departemen:", options=all_dept, default=all_dept)
     
-    lokasi_filter = st.sidebar.multiselect(
-        "Pilih Lokasi:", 
-        options=df["LOKASI"].unique(), 
-        default=df["LOKASI"].unique()
-    )
+    # Filter Lokasi
+    all_lokasi = sorted(df["LOKASI"].unique().tolist())
+    lokasi_filter = st.sidebar.multiselect("Pilih Lokasi:", options=all_lokasi, default=all_lokasi)
     
-    status_filter = st.sidebar.multiselect(
-        "Pilih Status Selisih:", 
-        options=df["STATUSSELISIH"].unique(), 
-        default=df["STATUSSELISIH"].unique()
-    )
+    # Filter Status
+    all_status = df["STATUSSELISIH"].unique().tolist()
+    status_filter = st.sidebar.multiselect("Status Selisih:", options=all_status, default=all_status)
 
-    # Apply Filters
-    df_selection = df.query(
-        "DEPARTEMEN == @dept_filter & LOKASI == @lokasi_filter & STATUSSELISIH == @status_filter"
-    )
+    # Filter Logic
+    mask = df["DEPARTEMEN"].isin(dept_filter) & df["LOKASI"].isin(lokasi_filter) & df["STATUSSELISIH"].isin(status_filter)
+    df_selection = df[mask]
 
-    # --- MAIN PAGE ---
-    st.title("📊 Dashboard Hasil Stok Opname")
-    st.markdown("##")
+    # --- HEADER ---
+    st.title("📦 Sistem Monitoring Stok Opname")
+    st.info(f"Menampilkan {len(df_selection):,} baris data berdasarkan filter.")
 
     # --- SCORECARDS ---
-    total_item = len(df_selection)
+    c1, c2, c3, c4 = st.columns(4)
+    
+    # Menghitung metrik
     total_val_selling = df_selection["VALSELLING"].sum()
     total_selisih_qty = df_selection["QTYSELISIH"].sum()
     total_selisih_val = df_selection["SELISIHVALSELLING"].sum()
-
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("Total Item", f"{total_item:,}")
-    with col2:
-        st.metric("Total Value (Selling)", f"Rp {total_val_selling:,.0f}")
-    with col3:
-        st.metric("Total Selisih Qty", f"{total_selisih_qty:,}")
-    with col4:
-        st.metric("Total Selisih Value", f"Rp {total_selisih_val:,.0f}")
+    
+    c1.metric("Total SKU", f"{len(df_selection):,}")
+    c2.metric("Total Value (Selling)", f"Rp {total_val_selling:,.0f}")
+    c3.metric("Total Selisih Qty", f"{total_selisih_qty:,}", delta_color="inverse")
+    c4.metric("Total Selisih Value", f"Rp {total_selisih_val:,.0f}", delta_color="inverse")
 
     st.markdown("---")
 
-    # --- GRAFIK ---
-    left_column, right_column = st.columns(2)
+    # --- VISUALISASI ---
+    col_left, col_right = st.columns([6, 4])
 
-    # Bar Chart: Selisih per Departemen
-    fig_dept = px.bar(
-        df_selection.groupby("DEPARTEMEN")[["SELISIHVALSELLING"]].sum().reset_index(),
-        x="DEPARTEMEN",
-        y="SELISIHVALSELLING",
-        title="<b>Total Selisih Value per Departemen</b>",
-        color_discrete_sequence=["#0083B8"] * len(df_selection),
-        template="plotly_white",
-    )
-    left_column.plotly_chart(fig_dept, use_container_width=True)
+    with col_left:
+        # Grafik Bar Horizontal untuk Selisih per Departemen
+        dept_summary = df_selection.groupby("DEPARTEMEN")[["SELISIHVALSELLING"]].sum().sort_values(by="SELISIHVALSELLING", ascending=True).reset_index()
+        fig_dept = px.bar(
+            dept_summary, 
+            x="SELISIHVALSELLING", 
+            y="DEPARTEMEN", 
+            orientation='h',
+            title="<b>Nilai Selisih per Departemen</b>",
+            color="SELISIHVALSELLING",
+            color_continuous_scale="RdBu"
+        )
+        st.plotly_chart(fig_dept, use_container_width=True)
 
-    # Pie Chart: Status Selisih
-    fig_status = px.pie(
-        df_selection, 
-        values='QTYFISIK', 
-        names='STATUSSELISIH', 
-        title='<b>Proporsi Status Selisih</b>',
-        hole=0.4
-    )
-    right_column.plotly_chart(fig_status, use_container_width=True)
+    with col_right:
+        # Pie Chart untuk Status
+        fig_status = px.pie(
+            df_selection, 
+            names='STATUSSELISIH', 
+            values='VALSELLING',
+            title='<b>Persentase Status Stok</b>',
+            hole=0.5,
+            color_discrete_sequence=px.colors.qualitative.Pastel
+        )
+        st.plotly_chart(fig_status, use_container_width=True)
 
     # --- TABEL DATA ---
-    st.markdown("### Detail Data Stok Opname")
+    st.subheader("📋 Rincian Data")
+    
+    # Menggunakan container untuk tabel agar rapi
+    # Kita batasi rendering awal ke 5,000 baris untuk kecepatan, user bisa scroll/search
     st.dataframe(
-        df_selection.style.highlight_max(axis=0, subset=['QTYSELISIH']),
-        use_container_width=True
+        df_selection, 
+        use_container_width=True,
+        column_config={
+            "SELLING_PRICE": st.column_config.NumberColumn("Harga Jual", format="Rp %d"),
+            "VALSELLING": st.column_config.NumberColumn("Total Val", format="Rp %d"),
+            "QTYSELISIH": st.column_config.NumberColumn("Selisih", format="%d")
+        }
+    )
+
+    # Tombol Download
+    csv = df_selection.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="📥 Download Data Filtered (CSV)",
+        data=csv,
+        file_name='hasil_stok_opname.csv',
+        mime='text/csv',
     )
 
 except Exception as e:
-    st.error(f"Gagal memuat data. Pastikan ID Spreadsheet benar dan akses publik terbuka. Error: {e}")
+    st.error(f"Terjadi kesalahan teknis: {e}")
