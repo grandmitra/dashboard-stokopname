@@ -12,9 +12,9 @@ st.markdown("""
     <style>
     .main { background-color: #f5f7f9; }
     .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-    /* Style khusus untuk tombol agar terlihat seragam */
-    div.stButton > button:first-child {
-        width: 100%;
+    /* Menyeragamkan lebar tombol di sidebar */
+    [data-testid="stSidebar"] .stElementContainer button {
+        width: 100% !important;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -34,27 +34,34 @@ try:
     df = load_data()
 
     # --- SIDEBAR FILTER & LINKS ---
-    st.sidebar.header("🎯 Filter Panel")
-    
-    # Filter Departemen
-    all_dept = sorted(df["DEPARTEMEN"].unique().tolist())
-    dept_filter = st.sidebar.multiselect("Pilih Departemen:", options=all_dept, default=all_dept)
-    
-    # Filter Lokasi
-    all_lokasi = sorted(df["LOKASI"].unique().tolist())
-    lokasi_filter = st.sidebar.multiselect("Pilih Lokasi:", options=all_lokasi, default=all_lokasi)
-    
-    # Filter Status
-    all_status = df["STATUSSELISIH"].unique().tolist()
-    status_filter = st.sidebar.multiselect("Status Selisih:", options=all_status, default=all_status)
+    with st.sidebar:
+        st.header("🎯 Filter Panel")
+        
+        all_dept = sorted(df["DEPARTEMEN"].unique().tolist())
+        dept_filter = st.multiselect("Pilih Departemen:", options=all_dept, default=all_dept)
+        
+        all_lokasi = sorted(df["LOKASI"].unique().tolist())
+        lokasi_filter = st.multiselect("Pilih Lokasi:", options=all_lokasi, default=all_lokasi)
+        
+        all_status = df["STATUSSELISIH"].unique().tolist()
+        status_filter = st.multiselect("Status Selisih:", options=all_status, default=all_status)
 
-    st.sidebar.markdown("---")
-    st.sidebar.header("🔗 Akses Progress GAS")
-    
-    # Menambahkan Tombol Progress dengan target="_blank" otomatis (default Streamlit link_button)
-    st.sidebar.link_button("🚀 Buka Progress 1", "https://script.google.com/macros/s/AKfycbzy2LxYk5lZHDyLav1MD7RZj6bR8R2LGwHQRVQaftTgXI00iFMzX7jp-37iz-mra8GXKg/exec")
-    st.sidebar.link_button("🚀 Buka Progress 2", "https://script.google.com/macros/s/AKfycbxWEUlPuofOGeDgGaEo1qh9QP0vs9f5NZju0WwKnnT-y3jrRpUhuBghORQPNQQRw7Ef/exec")
-    st.sidebar.link_button("🚀 Buka Progress 3", "https://script.google.com/macros/s/AKfycbwYchGDTxUWDwoEVxHPrBKxsuIOQOCiyUTq02SdJ93gpgVSRlXerkSM2UnfLPxxPxvc/exec")
+        st.markdown("---")
+        
+        # --- KELOMPOK TOMBOL PROGRESS ---
+        st.header("🔗 Progress Monitoring")
+        st.link_button("🚀 Progress 1", "https://script.google.com/macros/s/AKfycbzy2LxYk5lZHDyLav1MD7RZj6bR8R2LGwHQRVQaftTgXI00iFMzX7jp-37iz-mra8GXKg/exec")
+        st.link_button("🚀 Progress 2", "https://script.google.com/macros/s/AKfycbxWEUlPuofOGeDgGaEo1qh9QP0vs9f5NZju0WwKnnT-y3jrRpUhuBghORQPNQQRw7Ef/exec")
+        st.link_button("🚀 Progress 3", "https://script.google.com/macros/s/AKfycbwYchGDTxUWDwoEVxHPrBKxsuIOQOCiyUTq02SdJ93gpgVSRlXerkSM2UnfLPxxPxvc/exec")
+        
+        st.markdown("---")
+
+        # --- KELOMPOK TOMBOL SISTEM PENDUKUNG ---
+        st.header("🛠️ Sistem Pendukung")
+        st.link_button("🔍 Unlisting Product", "https://grandmitra.github.io/unlisting/")
+        st.link_button("🕵️ Lost Code Hunt", "https://grandmitra.github.io/lostcodehunt/")
+        st.link_button("📝 Input SO Manual", "https://grandmitra.github.io/inputso/")
+        st.link_button("🚚 Anterinlah App", "https://anterinlah.web.app/")
 
     # Filter Logic
     mask = df["DEPARTEMEN"].isin(dept_filter) & df["LOKASI"].isin(lokasi_filter) & df["STATUSSELISIH"].isin(status_filter)
@@ -67,7 +74,6 @@ try:
     # --- SCORECARDS ---
     c1, c2, c3, c4 = st.columns(4)
     
-    # Menghitung metrik
     total_val_selling = df_selection["VALSELLING"].sum()
     total_selisih_qty = df_selection["QTYSELISIH"].sum()
     total_selisih_val = df_selection["SELISIHVALSELLING"].sum()
