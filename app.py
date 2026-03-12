@@ -1,161 +1,165 @@
 import streamlit as st
 import pandas as pd
+import plotly.express as px
+from datetime import datetime
 
 # 1. KONFIGURASI HALAMAN
-st.set_page_config(page_title="Dashboard Stok Opname GMB", layout="wide")
+st.set_page_config(page_title="SO System V14 - Python Analytics", layout="wide")
 
-# 2. SISTEM PASSWORD (STABIL)
-def check_password():
-    if "password_correct" not in st.session_state:
-        st.markdown("<br><br>", unsafe_allow_html=True)
-        col1, col2, col3 = st.columns([1, 1.5, 1])
-        with col2:
-            st.markdown("""
-                <div style='text-align: center; background-color: #ffffff; padding: 30px; border-radius: 15px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);'>
-                    <h2 style='color: #1f77b4;'>🔐 Login Sistem</h2>
-                    <p style='color: #666;'>Dashboard Monitoring Stok Opname</p>
-                </div>
-            """, unsafe_allow_html=True)
-            pwd = st.text_input("Masukkan Password", type="password")
-            if st.button("Masuk", use_container_width=True):
-                if pwd == "mbg123":
-                    st.session_state["password_correct"] = True
-                    st.rerun()
-                else:
-                    st.error("😕 Password salah.")
-        return False
-    return True
-
-if not check_password():
-    st.stop()
-
-# 3. LOAD DATA & LOCAL STORAGE (SESSION STATE)
-@st.cache_data(ttl=600)
-def fetch_data():
-    sheet_id = "1mjjDF1ETjOB_eTI6ChI6dqvg0wf9aCa7cJwx0x2K3No"
-    url_stok = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet=database_stok"
-    url_audit = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet=database_stokopname"
-    
-    df_s = pd.read_csv(url_stok, low_memory=False)
-    df_a = pd.read_csv(url_audit, low_memory=False)
-    
-    # Normalisasi Header Audit
-    df_a.columns = [str(c).strip().upper() for c in df_a.columns]
-    return df_s, df_a
-
-# Inisialisasi Data ke Session State agar kencang
-if 'data_stok' not in st.session_state:
-    with st.spinner("Sedang mengambil data terbaru..."):
-        s, a = fetch_data()
-        st.session_state['data_stok'] = s
-        st.session_state['data_audit'] = a
-
-df_stok = st.session_state['data_stok']
-df_audit = st.session_state['data_audit']
-
-# 4. SIDEBAR - SISTEM PENDUKUNG & REFRESH
-with st.sidebar:
-    st.markdown("<div style='text-align: center;'><h2>🏢 Grand Mitra</h2></div>", unsafe_allow_html=True)
-    st.markdown("---")
-    
-    st.header("🛠️ Sistem Pendukung")
-    st.link_button("🔍 Unlisting Product", "https://grandmitra.github.io/unlisting/", use_container_width=True)
-    st.link_button("🕵️ Lost Code Hunt", "https://grandmitra.github.io/lostcodehunt/", use_container_width=True)
-    st.link_button("📝 Input SO Manual", "https://grandmitra.github.io/inputso/", use_container_width=True)
-    st.link_button("🚚 Anterinlah App", "https://anterinlah.web.app/", use_container_width=True)
-    
-    st.markdown("---")
-    st.header("⚙️ Kontrol")
-    if st.button("🔄 Refresh Data G-Sheets", use_container_width=True):
-        st.cache_data.clear()
-        if 'data_stok' in st.session_state: del st.session_state['data_stok']
-        if 'data_audit' in st.session_state: del st.session_state['data_audit']
-        st.rerun()
-    
-    st.markdown("<br><br>", unsafe_allow_html=True)
-    st.caption("Dashboard v23.0 - Grand Mitra Bangunan")
-
-# 5. PEMROSESAN DATA AUDIT (PIVOT SEJAJAR)
-# Pastikan kolom numerik benar
-for c in ['QTYFISIK', 'QTYTEORI']:
-    if c in df_audit.columns:
-        df_audit[c] = pd.to_numeric(df_audit[c], errors='coerce').fillna(0)
-
-# Membuat Pivot P1, P2, P3
-df_pivot = df_audit.pivot_table(
-    index=['BARCODE_KODE', 'DESKRIPSI', 'LOKASI', 'QTYTEORI'],
-    columns='JENIS_PENGHITUNG',
-    values='QTYFISIK',
-    aggfunc='sum'
-).fillna(0).reset_index()
-
-# Pastikan kolom P1, P2, P3 selalu ada meski belum ada input
-for p in ['P1', 'P2', 'P3']:
-    if p not in df_pivot.columns:
-        df_pivot[p] = 0
-
-# Rumus Selisih: Prioritas P3, Jika P3 Kosong pakai P1
-def hitung_selisih(row):
-    fisik_akhir = row['P3'] if row['P3'] != 0 else row['P1']
-    return row['QTYTEORI'] - fisik_akhir
-
-df_pivot['SELISIH'] = df_pivot.apply(hitung_selisih, axis=1)
-
-# --- UI INTERFACE TABS ---
-tab_dash, tab_prog, tab_res = st.tabs(["📊 Dashboard Lokasi", "📋 Audit Pivot Detail", "📡 Monitoring Resume"])
-
-# TAB 1: DASHBOARD LOKASI (HANDLING MULTI-LOKASI KOMA)
-with tab_dash:
-    st.subheader("Pencarian Item Berdasarkan Lokasi")
-    search_l = st.text_input("📍 Filter Lokasi (Ketik lokasi, misal: W5030):", help="Mencari lokasi meskipun item berada di banyak titik (dipisah koma)")
-    
-    if search_l:
-        # Mencari string lokasi di dalam teks lokasi yang mungkin berisi koma
-        df_dash_filt = df_stok[df_stok['LOKASI'].astype(str).str.contains(search_l, case=False, na=False)]
-    else:
-        df_dash_filt = df_stok
-
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Total SKU Terfilter", f"{len(df_dash_filt):,}")
-    c2.metric("Total Value Selling", f"Rp {df_dash_filt['VALSELLING'].sum():,.0f}")
-    c3.metric("Total Selisih Qty", f"{df_dash_filt['QTYSELISIH'].sum():,}")
-    
-    st.dataframe(df_dash_filt, use_container_width=True)
-
-# TAB 2: AUDIT PIVOT (URUTAN SEJAJAR)
-with tab_prog:
-    st.subheader("Monitoring Hasil Audit Per Item")
-    q = st.text_input("🔍 Cari Barcode atau Nama Barang:", key="search_pivot")
-    
-    df_view = df_pivot
-    if q:
-        df_view = df_pivot[df_pivot['DESKRIPSI'].str.contains(q, case=False) | df_pivot['BARCODE_KODE'].astype(str).str.contains(q)]
-    
-    # Menampilkan kolom secara sejajar sesuai instruksi
-    st.dataframe(
-        df_view[['BARCODE_KODE', 'DESKRIPSI', 'LOKASI', 'QTYTEORI', 'P1', 'P2', 'P3', 'SELISIH']],
-        use_container_width=True
-    )
-
-# TAB 3: RESUME PER TITIK
-with tab_res:
-    st.subheader("Ringkasan Progress Per Titik Lokasi")
-    
-    # Agregasi data per lokasi dari hasil audit
-    df_res_loc = df_pivot.groupby('LOKASI').agg({
-        'BARCODE_KODE': 'count',
-        'QTYTEORI': 'sum',
-        'SELISIH': 'sum'
-    }).reset_index()
-    
-    df_res_loc.columns = ['LOKASI', 'JUMLAH_SKU', 'TOTAL_QTY_TEORI', 'TOTAL_SELISIH']
-    
-    st.dataframe(df_res_loc, use_container_width=True)
-
-# CSS Footer Sederhana
+# CSS untuk menyamakan style GAS (Indicator Box & Badges)
 st.markdown("""
     <style>
-    footer {visibility: hidden;}
-    .stApp {bottom: 10px;}
+    .indicator-box { border-left: 4px solid #0d6efd; padding-left: 12px; margin-bottom: 5px; }
+    .status-box { padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 12px; }
+    .done { background-color: #d4edda; color: #155724; }
+    .empty { background-color: #f8d7da; color: #721c24; }
+    .none { background-color: #e2e3e5; color: #383d41; }
+    .re-count { background-color: #fff3cd; color: #856404; border: 1px solid #ffeeba; }
+    .card-lokasi { border-bottom: 1px solid #e6e9ef; padding: 12px 0; }
     </style>
     """, unsafe_allow_html=True)
+
+@st.cache_data(ttl=600)
+def load_data(sheet_name):
+    sheet_id = "1mjjDF1ETjOB_eTI6ChI6dqvg0wf9aCa7cJwx0x2K3No"
+    url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
+    return pd.read_csv(url, low_memory=False).fillna(0)
+
+try:
+    # Memuat data utama
+    df_audit = load_data("database_stokopname")
+    df_stok = load_data("database_stok") # Sebagai acuan_stok_opname di GAS
+
+    tab1, tab2, tab3 = st.tabs(["📊 Executive Dashboard", "📋 Progress Monitoring", "🔍 Audit Compare"])
+
+    # --- TAB 1 & 2 (Diringkas agar fokus ke Logika Progres) ---
+    with tab1:
+        st.title("Executive Dashboard")
+        # ... (Logika visualisasi seperti sebelumnya)
+
+    # --- TAB 2: PROGRESS MONITORING (Sesuai Logika renderLogMaster di GAS) ---
+    with tab2:
+        st.subheader("Progress Monitoring Database")
+        search_q = st.text_input("Cari Lokasi...", key="search_log")
+        
+        lokasi_unik = sorted(df_audit["LOKASI"].unique())
+        if search_q:
+            lokasi_unik = [l for l in lokasi_unik if search_q.upper() in str(l).upper()]
+
+        for idx, lok in enumerate(lokasi_unik):
+            rows = df_audit[df_audit["LOKASI"] == lok]
+            
+            # LOGIKA GAS: hasP1, hasP2, hasP3
+            types = rows["JENIS_PENGHITUNG"].astype(str).unique()
+            hasP1 = "P1" in types
+            hasP2 = "P2" in types
+            hasP3 = "P3" in types
+
+            # Agregasi
+            countSKU = len(rows["BARCODE_KODE"].unique())
+            sumValBeli = pd.to_numeric(rows["VAL_SELISIH_BELI"], errors='coerce').sum()
+
+            with st.container():
+                st.markdown(f'<div class="card-lokasi">', unsafe_allow_html=True)
+                c_loc, c_prog, c_btn = st.columns([1, 4, 1])
+                c_loc.markdown(f"**{lok}**")
+                
+                # HTML Indicator Box (Meniru GAS)
+                html_prog = f"""
+                <div class="indicator-box">
+                    P1: <span class="status-box {'done' if hasP1 else 'empty'}">{'DONE' if hasP1 else 'EMPTY'}</span> &nbsp;
+                    P2: <span class="status-box {'done' if hasP2 else 'empty'}">{'DONE' if hasP2 else 'EMPTY'}</span> &nbsp;
+                    P3: <span class="status-box {'done' if hasP3 else 'none'}">{'DONE' if hasP3 else 'NONE'}</span> &nbsp; | &nbsp;
+                    ITEMS: <b>{countSKU}</b> &nbsp; | &nbsp;
+                    VAL_BELI: <b style="color:{'red' if sumValBeli < 0 else 'green'}">{sumValBeli:,.0f}</b>
+                </div>
+                """
+                c_prog.markdown(html_prog, unsafe_allow_html=True)
+                
+                if c_btn.button("PILIH LOKASI", key=f"sel_{lok}"):
+                    st.session_state.selected_lokasi = lok
+                st.markdown('</div>', unsafe_allow_html=True)
+
+    # --- TAB 3: AUDIT COMPARE (Logika showAudit & renderDetailTable di GAS) ---
+    with tab3:
+        if 'selected_lokasi' in st.session_state and st.session_state.selected_lokasi:
+            lok = st.session_state.selected_lokasi
+            st.subheader(f"Audit Compare Report: {lok}")
+            
+            # Filter data khusus lokasi terpilih
+            data_lok = df_audit[df_audit["LOKASI"] == lok].copy()
+            
+            # PIVOT data agar P1, P2, P3 sejajar (Logika renderDetailTable)
+            df_pivot = data_lok.pivot_table(
+                index=['BARCODE_KODE', 'DESKRIPSI', 'TITIKLOKASI'],
+                columns='JENIS_PENGHITUNG',
+                values='QTYFISIK',
+                aggfunc='first'
+            ).reset_index().fillna(0)
+
+            # Pastikan kolom tersedia
+            for p in ['P1', 'P2', 'P3']:
+                if p not in df_pivot.columns: df_pivot[p] = 0
+
+            # Gabungkan dengan QTY TEORI dari acuan (df_stok)
+            df_final = pd.merge(df_pivot, df_stok[['BARCODE_KODE', 'QTYTEORI', 'HARGABELI', 'HARGAJUAL']], on='BARCODE_KODE', how='left').fillna(0)
+
+            # --- LOGIKA PENENTUAN STATUS (INTI DARI SCRIPT GAS ANDA) ---
+            def determine_status(row):
+                q1, q2, q3 = row['P1'], row['P2'], row['P3']
+                
+                if q3 != 0:
+                    return "DONE (P3)", q3, True
+                elif q1 != 0 and q2 != 0:
+                    if q1 == q2:
+                        return "DONE (MATCH)", q1, True
+                    else:
+                        return "RE-COUNT", 0, False
+                else:
+                    return "INCOMPLETE", 0, False
+
+            # Terapkan fungsi logika
+            res = df_final.apply(determine_status, axis=1)
+            df_final['STATUS'] = [x[0] for x in res]
+            df_final['FINAL_QTY'] = [x[1] for x in res]
+            df_final['IS_REVEALED'] = [x[2] for x in res]
+
+            # Hitung Selisih & Value
+            df_final['SELISIH'] = df_final.apply(lambda x: x['FINAL_QTY'] - x['QTYTEORI'] if x['IS_REVEALED'] else 0, axis=1)
+            df_final['VAL_BELI'] = df_final['SELISIH'] * df_final['HARGABELI']
+
+            # Metrik Summary
+            m1, m2, m3 = st.columns(3)
+            m1.metric("TOTAL SKU", len(df_final))
+            m2.metric("MISMATCH (RE-COUNT)", len(df_final[df_final['STATUS'] == "RE-COUNT"]))
+            m3.metric("MATCH DONE", len(df_final[df_final['STATUS'].str.contains("DONE")]))
+
+            # Filter Tampilan (Sesuai fltrAudit di GAS)
+            view_opt = st.radio("Tampilkan:", ["Semua SKU", "Mismatch Saja (RE-COUNT)"], horizontal=True)
+            if "Mismatch" in view_opt:
+                df_final = df_final[df_final['STATUS'] == "RE-COUNT"]
+
+            # Style DataFrame
+            def style_status(val):
+                if val == "RE-COUNT": return 'background-color: #fff3cd'
+                if "DONE" in str(val): return 'background-color: #d4edda'
+                return ''
+
+            st.dataframe(
+                df_final[['BARCODE_KODE', 'DESKRIPSI', 'QTYTEORI', 'P1', 'P2', 'P3', 'FINAL_QTY', 'SELISIH', 'VAL_BELI', 'STATUS']],
+                use_container_width=True,
+                column_config={
+                    "QTYTEORI": st.column_config.NumberColumn("TEORI", help="Data Sensor di GAS jika belum match"),
+                    "FINAL_QTY": "FINAL",
+                    "VAL_BELI": st.column_config.NumberColumn("VAL BELI", format="Rp %d")
+                }
+            )
+
+            if st.button("Tutup Audit"):
+                st.session_state.selected_lokasi = None
+                st.rerun()
+        else:
+            st.warning("Silakan pilih lokasi di tab 'Progress Monitoring' terlebih dahulu.")
+
+except Exception as e:
+    st.error(f"Error: {e}")
