@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-# 1. KONFIGURASI HALAMAN & LIMIT RENDER
+# 1. KONFIGURASI HALAMAN
 pd.set_option("styler.render.max_elements", 1000000)
 st.set_page_config(page_title="Dashboard Stok Opname", layout="wide")
 
@@ -47,18 +47,15 @@ st.markdown("""
 @st.cache_data(ttl=600)
 def load_all_data():
     sheet_id = "1mjjDF1ETjOB_eTI6ChI6dqvg0wf9aCa7cJwx0x2K3No"
-    
-    # Load Database Stok
     url_stok = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet=database_stok"
-    df_stok = pd.read_csv(url_stok, low_memory=False)
-    df_stok = df_stok.fillna({'DEPARTEMEN': 'Tanpa Dept', 'LOKASI': 'Tanpa Lokasi', 'STATUSSELISIH': 'Sesuai'})
-    
-    # Load Database Stokopname (Audit)
     url_audit = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet=database_stokopname"
+    
+    df_stok = pd.read_csv(url_stok, low_memory=False)
     df_audit = pd.read_csv(url_audit, low_memory=False)
     
-    # Standarisasi Nama Kolom (Uppercase & Strip)
+    df_stok = df_stok.fillna({'DEPARTEMEN': 'Tanpa Dept', 'LOKASI': 'Tanpa Lokasi', 'STATUSSELISIH': 'Sesuai'})
     df_audit.columns = [str(c).strip().upper() for c in df_audit.columns]
+    
     return df_stok, df_audit
 
 try:
@@ -68,110 +65,101 @@ try:
     with st.sidebar:
         st.header("🎯 Global Filter")
         all_dept = sorted(df_stok["DEPARTEMEN"].unique().tolist())
-        dept_filter = st.multiselect("Filter Departemen (Dashboard):", options=all_dept, default=all_dept)
+        dept_filter = st.multiselect("Filter Departemen:", options=all_dept, default=all_dept)
         
         st.markdown("---")
         st.header("🔗 Progress Monitoring")
         st.link_button("🚀 Progress 1", "https://script.google.com/macros/s/AKfycbzy2LxYk5lZHDyLav1MD7RZj6bR8R2LGwHQRVQaftTgXI00iFMzX7jp-37iz-mra8GXKg/exec")
         st.link_button("🚀 Progress 2", "https://script.google.com/macros/s/AKfycbxWEUlPuofOGeDgGaEo1qh9QP0vs9f5NZju0WwKnnT-y3jrRpUhuBghORQPNQQRw7Ef/exec")
         st.link_button("🚀 Progress 3", "https://script.google.com/macros/s/AKfycbwYchGDTxUWDwoEVxHPrBKxsuIOQOCiyUTq02SdJ93gpgVSRlXerkSM2UnfLPxxPxvc/exec")
-        
-        st.markdown("---")
-        st.header("🛠️ Sistem Pendukung")
-        st.link_button("🔍 Unlisting Product", "https://grandmitra.github.io/unlisting/")
-        st.link_button("🕵️ Lost Code Hunt", "https://grandmitra.github.io/lostcodehunt/")
-        st.link_button("📝 Input SO Manual", "https://grandmitra.github.io/inputso/")
-        st.link_button("🚚 Anterinlah App", "https://anterinlah.web.app/")
 
     tab_dashboard, tab_progres = st.tabs(["📊 Executive Dashboard", "📋 Progres Audit (Pivot)"])
 
-    # ==========================================
-    # TAB 1: EXECUTIVE DASHBOARD
-    # ==========================================
+    # --- TAB 1: DASHBOARD ---
     with tab_dashboard:
-        st.title("📦 Sistem Monitoring Stok Opname")
         mask = df_stok["DEPARTEMEN"].isin(dept_filter)
         df_selection = df_stok[mask]
-        
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Total SKU", f"{len(df_selection):,}")
         c2.metric("Total Value", f"Rp {df_selection['VALSELLING'].sum():,.0f}")
         c3.metric("Selisih Qty", f"{df_selection['QTYSELISIH'].sum():,}")
         c4.metric("Selisih Value", f"Rp {df_selection['SELISIHVALSELLING'].sum():,.0f}")
+        st.dataframe(df_selection, use_container_width=True)
 
-        st.markdown("---")
-        col_left, col_right = st.columns([6, 4])
-        with col_left:
-            dept_sum = df_selection.groupby("DEPARTEMEN")[["SELISIHVALSELLING"]].sum().reset_index()
-            st.plotly_chart(px.bar(dept_sum, x="SELISIHVALSELLING", y="DEPARTEMEN", orientation='h', title="Selisih per Dept"), use_container_width=True)
-        with col_right:
-            st.plotly_chart(px.pie(df_selection, names='STATUSSELISIH', values='VALSELLING', title='Status Stok', hole=0.5), use_container_width=True)
-
-    # ==========================================
-    # TAB 2: PROGRES AUDIT (PIVOT SEJAJAR)
-    # ==========================================
+    # --- TAB 2: PROGRES AUDIT (NAMA_PETUGAS JOINED) ---
     with tab_progres:
-        st.title("🔍 Audit Progress & Pivot Analysis")
+        st.title("🔍 Audit Progress (Joined Data)")
         
-        # Identifikasi kolom yang tersedia secara fleksibel
+        # Kolom dinamis berdasarkan upload kamu
         cols = df_audit.columns
         COL_TITIK = "TITIKLOKASI" if "TITIKLOKASI" in cols else cols[0]
         COL_SEBARAN = "SEBARANLOKASI" if "SEBARANLOKASI" in cols else cols[0]
-        
+
+        # Filter di Tab Progres
         col_search, col_lok = st.columns([2, 1])
         with col_search:
-            search_query = st.text_input("🔍 Cari Barcode atau Nama Barang...", key="audit_search")
+            search_query = st.text_input("🔍 Cari Barcode/Deskripsi...", key="audit_search")
         with col_lok:
             all_lok_audit = sorted(df_audit["LOKASI"].unique().astype(str).tolist())
-            lok_filter = st.multiselect("📍 Filter By Lokasi:", options=all_lok_audit, default=all_lok_audit)
+            lok_filter = st.multiselect("📍 Filter Lokasi:", options=all_lok_audit, default=all_lok_audit)
 
-        # Pre-processing Numerik
-        for col in ['QTYFISIK', 'QTYTEORI', 'VAL_SELISIH_JUAL']:
-            if col in df_audit.columns:
-                df_audit[col] = pd.to_numeric(df_audit[col], errors='coerce').fillna(0)
+        # Pre-processing Data
+        df_audit['QTYFISIK'] = pd.to_numeric(df_audit['QTYFISIK'], errors='coerce').fillna(0)
+        df_audit['QTYTEORI'] = pd.to_numeric(df_audit['QTYTEORI'], errors='coerce').fillna(0)
+        df_audit['NAMA_PETUGAS'] = df_audit['NAMA_PETUGAS'].astype(str).replace('nan', '-')
 
-        # Pivot Table
-        # Menggunakan kolom yang sudah divalidasi (TITIKLOKASI, SEBARANLOKASI)
-        df_pivot = df_audit.pivot_table(
-            index=['BARCODE_KODE', 'DESKRIPSI', 'DEPARTEMEN', 'LOKASI', COL_TITIK, COL_SEBARAN, 'NAMA_PETUGAS', 'QTYTEORI'],
+        # 5. LOGIKA PIVOT DENGAN JOIN NAMA PETUGAS
+        # Kita groupby dulu untuk menggabungkan Nama Petugas per Barcode & Lokasi
+        df_grouped = df_audit.groupby(['BARCODE_KODE', 'DESKRIPSI', 'DEPARTEMEN', 'LOKASI', COL_TITIK, COL_SEBARAN, 'QTYTEORI', 'JENIS_PENGHITUNG']).agg({
+            'QTYFISIK': 'sum',
+            'NAMA_PETUGAS': lambda x: ', '.join(sorted(set(x))) # Menggabungkan nama unik dengan koma
+        }).reset_index()
+
+        # Sekarang Pivot untuk menyejajarkan P1, P2, P3
+        df_pivot = df_grouped.pivot_table(
+            index=['BARCODE_KODE', 'DESKRIPSI', 'DEPARTEMEN', 'LOKASI', COL_TITIK, COL_SEBARAN, 'QTYTEORI'],
             columns='JENIS_PENGHITUNG',
-            values=['QTYFISIK', 'VAL_SELISIH_JUAL'],
-            aggfunc='sum'
+            values=['QTYFISIK', 'NAMA_PETUGAS'],
+            aggfunc={'QTYFISIK': 'sum', 'NAMA_PETUGAS': lambda x: ' / '.join(x)}
         ).fillna(0)
 
-        # Flatten Columns
+        # Perbaikan Nama Kolom Hasil Pivot
         df_pivot.columns = [f"{col}_{type}" for col, type in df_pivot.columns]
         df_pivot = df_pivot.reset_index()
 
-        # Proteksi Kolom P1, P2, P3
+        # Proteksi Kolom Nama Petugas & QTY
         for p in ['P1', 'P2', 'P3']:
             if f'QTYFISIK_{p}' not in df_pivot.columns: df_pivot[f'QTYFISIK_{p}'] = 0
-            if f'VAL_SELISIH_JUAL_{p}' not in df_pivot.columns: df_pivot[f'VAL_SELISIH_JUAL_{p}'] = 0
+            if f'NAMA_PETUGAS_{p}' not in df_pivot.columns: df_pivot[f'NAMA_PETUGAS_{p}'] = "-"
 
-        # Logika Status SO V14
-        def process_audit(row):
+        # Logika Status SO & Final Nama
+        def process_audit_joined(row):
             q1, q2, q3 = row['QTYFISIK_P1'], row['QTYFISIK_P2'], row['QTYFISIK_P3']
-            if q3 != 0: return q3, q3 - row['QTYTEORI'], "DONE (P3)"
-            if q1 == q2 and q1 != 0: return q1, q1 - row['QTYTEORI'], "DONE (MATCH)"
-            if q1 != q2: return 0, 0, "MISMATCH (WAIT P3)"
-            return 0, 0, "INCOMPLETE"
+            # Gabungkan semua petugas yang terlibat di P1, P2, dan P3
+            all_names = [str(row['NAMA_PETUGAS_P1']), str(row['NAMA_PETUGAS_P2']), str(row['NAMA_PETUGAS_P3'])]
+            names_clean = ', '.join(sorted(set([n for n in all_names if n not in ["-", "0", "0.0"]])))
+            
+            if q3 != 0: return q3, q3 - row['QTYTEORI'], "DONE (P3)", names_clean
+            if q1 == q2 and q1 != 0: return q1, q1 - row['QTYTEORI'], "DONE (MATCH)", names_clean
+            if q1 != q2: return 0, 0, "MISMATCH (WAIT P3)", names_clean
+            return 0, 0, "INCOMPLETE", names_clean
 
-        df_pivot[['FINAL_FISIK', 'QTYSELISIH', 'KETERANGAN']] = df_pivot.apply(
-            lambda x: pd.Series(process_audit(x)), axis=1
+        df_pivot[['FINAL_FISIK', 'QTYSELISIH', 'KETERANGAN', 'GABUNGAN_PETUGAS']] = df_pivot.apply(
+            lambda x: pd.Series(process_audit_joined(x)), axis=1
         )
 
-        # Apply Filters
+        # Apply Global Filters
         mask_audit = df_pivot["LOKASI"].astype(str).isin(lok_filter)
         if search_query:
             mask_audit = mask_audit & (df_pivot["BARCODE_KODE"].astype(str).str.contains(search_query, case=False) | df_pivot["DESKRIPSI"].str.contains(search_query, case=False))
         
         df_final = df_pivot[mask_audit]
 
+        # Tampilkan Kolom
         st.dataframe(
-            df_final[['BARCODE_KODE', 'DESKRIPSI', 'LOKASI', COL_TITIK, COL_SEBARAN, 'NAMA_PETUGAS', 'QTYTEORI', 'QTYFISIK_P1', 'QTYFISIK_P2', 'QTYFISIK_P3', 'QTYSELISIH', 'KETERANGAN']],
+            df_final[['BARCODE_KODE', 'DESKRIPSI', 'LOKASI', COL_TITIK, 'GABUNGAN_PETUGAS', 'QTYTEORI', 'QTYFISIK_P1', 'QTYFISIK_P2', 'QTYFISIK_P3', 'QTYSELISIH', 'KETERANGAN']],
             use_container_width=True
         )
 
 except Exception as e:
     st.error(f"Terjadi kesalahan teknis: {e}")
-    st.info("Pastikan kolom TITIKLOKASI dan SEBARANLOKASI tersedia di sheet database_stokopname.")
