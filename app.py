@@ -2,124 +2,152 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-# Konfigurasi
+# 1. Konfigurasi Global & Limit Render
 pd.set_option("styler.render.max_elements", 1000000)
-st.set_page_config(page_title="Monitoring Stok Opname", layout="wide")
+st.set_page_config(page_title="Sistem Monitoring Stok Opname", layout="wide")
 
-# CSS untuk styling Progress (DONE/EMPTY/NONE)
+# CSS Kustom untuk tampilan Fancy
 st.markdown("""
-<style>
+    <style>
+    .main { background-color: #f5f7f9; }
+    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
     .status-box { padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 12px; }
     .done { background-color: #d4edda; color: #155724; }
     .empty { background-color: #f8d7da; color: #721c24; }
     .none { background-color: #e2e3e5; color: #383d41; }
     .card-lokasi { border-bottom: 1px solid #e6e9ef; padding: 10px 0; }
-</style>
-""", unsafe_allow_html=True)
+    </style>
+    """, unsafe_allow_html=True)
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=600)
 def load_data(sheet_name):
     sheet_id = "1mjjDF1ETjOB_eTI6ChI6dqvg0wf9aCa7cJwx0x2K3No"
     url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
-    return pd.read_csv(url, low_memory=False).fillna("-")
+    df = pd.read_csv(url, low_memory=False)
+    fill_values = {'DEPARTEMEN': 'Tanpa Dept', 'LOKASI': 'Tanpa Lokasi', 'STATUSSELISIH': 'Sesuai'}
+    return df.fillna(value=fill_values)
 
-try:
-    # Load data dari kedua sheet
-    df_stok = load_data("database_stok")
-    df_audit = load_data("database_stokopname")
+# Navigasi Tab
+tab1, tab2 = st.tabs(["📊 Executive Dashboard", "📋 Progress Monitoring"])
 
-    tab1, tab2 = st.tabs(["📊 Executive Dashboard", "📋 Progress Monitoring"])
+# ==========================================
+# TAB 1: EXECUTIVE DASHBOARD
+# ==========================================
+with tab1:
+    try:
+        df = load_data("database_stok")
 
-    # --- TAB 1: EXECUTIVE DASHBOARD ---
-    with tab1:
-        st.title("Executive Dashboard")
-        st.sidebar.header("Filter Dashboard")
-        depts = st.sidebar.multiselect("Filter Departemen", df_stok["DEPARTEMEN"].unique(), df_stok["DEPARTEMEN"].unique())
-        df_dash = df_stok[df_stok["DEPARTEMEN"].isin(depts)]
+        st.title("📦 Executive Dashboard")
         
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Total SKU", f"{len(df_dash):,}")
-        c2.metric("Total Val Jual", f"Rp {pd.to_numeric(df_dash['VALSELLING'], errors='coerce').sum():,.0f}")
-        c3.metric("Total Selisih", f"Rp {pd.to_numeric(df_dash['SELISIHVALSELLING'], errors='coerce').sum():,.0f}")
-        
-        st.plotly_chart(px.bar(df_dash.groupby("DEPARTEMEN")["VALSELLING"].sum().reset_index(), x="DEPARTEMEN", y="VALSELLING"), use_container_width=True)
+        # --- SIDEBAR FILTER (Hanya muncul untuk Tab Eksekutif) ---
+        with st.sidebar:
+            st.header("🎯 Filter Panel")
+            all_dept = sorted(df["DEPARTEMEN"].unique().tolist())
+            dept_filter = st.multiselect("Pilih Departemen:", options=all_dept, default=all_dept)
+            
+            all_lokasi = sorted(df["LOKASI"].unique().tolist())
+            lokasi_filter = st.multiselect("Pilih Lokasi:", options=all_lokasi, default=all_lokasi)
+            
+            all_status = df["STATUSSELISIH"].unique().tolist()
+            status_filter = st.multiselect("Status Selisih:", options=all_status, default=all_status)
 
-    # --- TAB 2: PROGRESS MONITORING ---
-    with tab2:
-        st.subheader("Progress Monitoring Database")
+        mask = df["DEPARTEMEN"].isin(dept_filter) & df["LOKASI"].isin(lokasi_filter) & df["STATUSSELISIH"].isin(status_filter)
+        df_selection = df[mask]
+
+        st.info(f"Menampilkan {len(df_selection):,} SKU berdasarkan filter.")
+
+        # --- SCORECARDS ---
+        c1, c2, c3, c4 = st.columns(4)
+        total_val_selling = df_selection["VALSELLING"].sum()
+        total_selisih_qty = df_selection["QTYSELISIH"].sum()
+        total_selisih_val = df_selection["SELISIHVALSELLING"].sum()
         
-        # State management untuk menyimpan lokasi yang dipilih
+        c1.metric("Total SKU", f"{len(df_selection):,}")
+        c2.metric("Total Value (Selling)", f"Rp {total_val_selling:,.0f}")
+        c3.metric("Total Selisih Qty", f"{total_selisih_qty:,}", delta_color="inverse")
+        c4.metric("Total Selisih Value", f"Rp {total_selisih_val:,.0f}", delta_color="inverse")
+
+        st.markdown("---")
+
+        # --- VISUALISASI ---
+        col_l, col_r = st.columns([6, 4])
+        with col_l:
+            dept_sum = df_selection.groupby("DEPARTEMEN")[["SELISIHVALSELLING"]].sum().sort_values(by="SELISIHVALSELLING").reset_index()
+            fig_dept = px.bar(dept_sum, x="SELISIHVALSELLING", y="DEPARTEMEN", orientation='h', 
+                             title="<b>Selisih per Departemen</b>", color="SELISIHVALSELLING", color_continuous_scale="RdBu")
+            st.plotly_chart(fig_dept, use_container_width=True)
+
+        with col_r:
+            fig_status = px.pie(df_selection, names='STATUSSELISIH', values='VALSELLING', 
+                               title='<b>Persentase Status Stok</b>', hole=0.5)
+            st.plotly_chart(fig_status, use_container_width=True)
+
+        # --- TABEL DATA ---
+        st.subheader("📋 Rincian Data")
+        st.dataframe(df_selection, use_container_width=True, 
+                     column_config={
+                         "SELLING_PRICE": st.column_config.NumberColumn("Harga Jual", format="Rp %d"),
+                         "VALSELLING": st.column_config.NumberColumn("Total Val", format="Rp %d"),
+                         "QTYSELISIH": st.column_config.NumberColumn("Selisih", format="%d")
+                     })
+
+    except Exception as e:
+        st.error(f"Error Eksekutif: {e}")
+
+# ==========================================
+# TAB 2: PROGRESS MONITORING
+# ==========================================
+with tab2:
+    try:
+        df_audit = load_data("database_stokopname")
+        st.title("🔍 Progress Monitoring Database")
+
         if 'selected_lokasi' not in st.session_state:
             st.session_state.selected_lokasi = None
 
-        # Container untuk List Lokasi
-        with st.container():
-            # Header List
-            h_col1, h_col2, h_col3 = st.columns([1, 4, 1])
-            h_col1.caption("LOKASI")
-            h_col2.caption("INDIKATOR PROGRES & AGREGASI NILAI")
-            h_col3.caption("AKSI")
+        # List Lokasi Resume
+        h_col1, h_col2, h_col3 = st.columns([1, 4, 1])
+        h_col1.caption("LOKASI")
+        h_col2.caption("INDIKATOR & AGREGASI")
+        h_col3.caption("AKSI")
 
-            # Ambil resume unik per lokasi
-            lokasi_list = df_audit["LOKASI"].unique()
+        lokasi_list = sorted(df_audit["LOKASI"].unique())
+        for idx, loc in enumerate(lokasi_list):
+            df_loc = df_audit[df_audit["LOKASI"] == loc]
             
-            for loc in lokasi_list:
-                df_loc = df_audit[df_audit["LOKASI"] == loc]
+            # Logic Status Dummy (Bisa Anda ganti dengan kolom asli)
+            p1 = "DONE" if len(df_loc) > 0 else "EMPTY"
+            p2 = "EMPTY" 
+            
+            val_beli = pd.to_numeric(df_loc['VAL_SELISIH_BELI'], errors='coerce').sum()
+            
+            with st.container():
+                st.markdown('<div class="card-lokasi">', unsafe_allow_html=True)
+                c_loc, c_prog, c_btn = st.columns([1, 4, 1])
+                c_loc.markdown(f"**{loc}**")
                 
-                # Hitung Agregasi (Contoh logika penentuan status P1-P3)
-                # Anda bisa menyesuaikan kolom ini dengan data asli jika ada di sheet
-                p1_status = "DONE" if len(df_loc) > 0 else "EMPTY"
-                p2_status = "DONE" if index % 2 == 0 else "EMPTY" # Contoh logic dummy
+                prog_html = f"""
+                <span class="status-box {'done' if p1=='DONE' else 'empty'}">P1: {p1}</span> &nbsp;
+                <span class="status-box {'done' if p2=='DONE' else 'empty'}">P2: {p2}</span> &nbsp;
+                <span class="status-box none">P3: NONE</span> &nbsp; | &nbsp;
+                ITEMS: <b>{len(df_loc)}</b> &nbsp; | &nbsp; 
+                VAL_BELI: <span style="color:{'red' if val_beli < 0 else 'green'}">{val_beli:,.0f}</span>
+                """
+                c_prog.markdown(prog_html, unsafe_allow_html=True)
                 
-                with st.container():
-                    st.markdown(f'<div class="card-lokasi">', unsafe_allow_html=True)
-                    c_loc, c_prog, c_btn = st.columns([1, 4, 1])
-                    
-                    c_loc.markdown(f"**{loc}**")
-                    
-                    # Tampilan Indikator P1, P2, P3
-                    prog_html = f"""
-                    <span class="status-box {'done' if p1_status=='DONE' else 'empty'}">P1: {p1_status}</span> &nbsp;
-                    <span class="status-box {'done' if p2_status=='DONE' else 'empty'}">P2: {p2_status}</span> &nbsp;
-                    <span class="status-box none">P3: NONE</span> &nbsp; | &nbsp;
-                    ITEMS: <b>{len(df_loc)}</b> &nbsp; | &nbsp; 
-                    VAL_BELI: <span style="color:red">Rp {pd.to_numeric(df_loc['VAL_SELISIH_BELI'], errors='coerce').sum():,.0f}</span>
-                    """
-                    c_prog.markdown(prog_html, unsafe_allow_html=True)
-                    
-                    if c_btn.button("DETAIL COMPARE", key=f"btn_{loc}"):
-                        st.session_state.selected_lokasi = loc
-                    st.markdown('</div>', unsafe_allow_html=True)
+                if c_btn.button("DETAIL COMPARE", key=f"btn_{loc}_{idx}"):
+                    st.session_state.selected_lokasi = loc
+                st.markdown('</div>', unsafe_allow_html=True)
 
-        st.divider()
-
-        # --- BAGIAN DETAIL: AUDIT COMPARE REPORT ---
+        # Tampilan Detail jika lokasi diklik
         if st.session_state.selected_lokasi:
-            sel_loc = st.session_state.selected_lokasi
-            st.subheader(f"Audit Compare Report - Lokasi: {sel_loc}")
-            
-            df_filtered = df_audit[df_audit["LOKASI"] == sel_loc]
-            
-            # Format Tabel seperti Gambar 1
-            st.dataframe(
-                df_filtered,
-                use_container_width=True,
-                column_order=(
-                    "BARCODE_KODE", "DESKRIPSI", "TITIKLOKASI", "SEBARANLOKASI", 
-                    "QTYTEORI", "QTYFISIK", "QTYSELISIH", "VAL_SELISIH_BELI", "KETERANGAN"
-                ),
-                column_config={
-                    "BARCODE_KODE": "KODE",
-                    "QTYTEORI": st.column_config.NumberColumn("TEORI", format="%d"),
-                    "QTYFISIK": st.column_config.NumberColumn("FISIK", format="%d"),
-                    "QTYSELISIH": st.column_config.NumberColumn("SELISIH", format="%d"),
-                    "VAL_SELISIH_BELI": st.column_config.NumberColumn("VAL_BELI", format="Rp %d"),
-                }
-            )
-            
+            st.markdown("---")
+            st.subheader(f"Audit Compare Report: {st.session_state.selected_lokasi}")
+            df_det = df_audit[df_audit["LOKASI"] == st.session_state.selected_lokasi]
+            st.dataframe(df_det, use_container_width=True)
             if st.button("Tutup Detail"):
                 st.session_state.selected_lokasi = None
                 st.rerun()
 
-except Exception as e:
-    st.error(f"Error: {e}")
+    except Exception as e:
+        st.error(f"Error Progress: {e}")
