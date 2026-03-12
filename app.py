@@ -12,6 +12,10 @@ st.markdown("""
     <style>
     .main { background-color: #f5f7f9; }
     .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    /* Style khusus untuk tombol agar terlihat seragam */
+    div.stButton > button:first-child {
+        width: 100%;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -29,7 +33,7 @@ def load_data():
 try:
     df = load_data()
 
-    # --- SIDEBAR FILTER ---
+    # --- SIDEBAR FILTER & LINKS ---
     st.sidebar.header("🎯 Filter Panel")
     
     # Filter Departemen
@@ -43,6 +47,14 @@ try:
     # Filter Status
     all_status = df["STATUSSELISIH"].unique().tolist()
     status_filter = st.sidebar.multiselect("Status Selisih:", options=all_status, default=all_status)
+
+    st.sidebar.markdown("---")
+    st.sidebar.header("🔗 Akses Progress GAS")
+    
+    # Menambahkan Tombol Progress dengan target="_blank" otomatis (default Streamlit link_button)
+    st.sidebar.link_button("🚀 Buka Progress 1", "https://script.google.com/macros/s/AKfycbzy2LxYk5lZHDyLav1MD7RZj6bR8R2LGwHQRVQaftTgXI00iFMzX7jp-37iz-mra8GXKg/exec")
+    st.sidebar.link_button("🚀 Buka Progress 2", "https://script.google.com/macros/s/AKfycbxWEUlPuofOGeDgGaEo1qh9QP0vs9f5NZju0WwKnnT-y3jrRpUhuBghORQPNQQRw7Ef/exec")
+    st.sidebar.link_button("🚀 Buka Progress 3", "https://script.google.com/macros/s/AKfycbwYchGDTxUWDwoEVxHPrBKxsuIOQOCiyUTq02SdJ93gpgVSRlXerkSM2UnfLPxxPxvc/exec")
 
     # Filter Logic
     mask = df["DEPARTEMEN"].isin(dept_filter) & df["LOKASI"].isin(lokasi_filter) & df["STATUSSELISIH"].isin(status_filter)
@@ -71,7 +83,6 @@ try:
     col_left, col_right = st.columns([6, 4])
 
     with col_left:
-        # Grafik Bar Horizontal untuk Selisih per Departemen
         dept_summary = df_selection.groupby("DEPARTEMEN")[["SELISIHVALSELLING"]].sum().sort_values(by="SELISIHVALSELLING", ascending=True).reset_index()
         fig_dept = px.bar(
             dept_summary, 
@@ -85,7 +96,6 @@ try:
         st.plotly_chart(fig_dept, use_container_width=True)
 
     with col_right:
-        # Pie Chart untuk Status
         fig_status = px.pie(
             df_selection, 
             names='STATUSSELISIH', 
@@ -98,9 +108,6 @@ try:
 
     # --- TABEL DATA ---
     st.subheader("📋 Rincian Data")
-    
-    # Menggunakan container untuk tabel agar rapi
-    # Kita batasi rendering awal ke 5,000 baris untuk kecepatan, user bisa scroll/search
     st.dataframe(
         df_selection, 
         use_container_width=True,
