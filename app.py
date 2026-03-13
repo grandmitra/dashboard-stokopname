@@ -6,7 +6,7 @@ import io
 # 1. KONFIGURASI HALAMAN
 st.set_page_config(page_title="SO System V16 - Grand Mitra", layout="wide")
 
-# CSS Kustom
+# CSS Kustom untuk UI yang elegan & scannable
 st.markdown("""
     <style>
     .card-lokasi {
@@ -24,14 +24,15 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# 2. FUNGSI DATA
+# 2. FUNGSI DATA DENGAN LOCAL STORAGE CACHE (PERSIST)
 def clean_columns(df):
     df.columns = [str(c).strip().upper() for c in df.columns]
     df.columns = df.columns.str.replace(r'[^A-Z0-9_]', '_', regex=True)
     df.columns = df.columns.str.replace(r'__+', '_', regex=True)
     return df
 
-@st.cache_data(ttl=600)
+# persist="disk" akan menyimpan cache di penyimpanan lokal untuk mempercepat loading berikutnya
+@st.cache_data(ttl=300, persist="disk") 
 def load_data(sheet_name):
     try:
         sheet_id = "1mjjDF1ETjOB_eTI6ChI6dqvg0wf9aCa7cJwx0x2K3No"
@@ -45,11 +46,12 @@ def load_data(sheet_name):
 
 # 3. LOGIKA UTAMA
 try:
+    # Mengambil data (Jika sudah ada di cache, akan instan)
     df_audit = load_data("database_stokopname")
     df_stok = load_data("database_stok")
-    df_acuan = load_data("acuan_stok_opname") # Sheet Master Lokasi
+    df_acuan = load_data("acuan_stok_opname")
 
-    # Standarisasi Kolom
+    # Standarisasi Kolom Utama
     for df_check in [df_audit, df_stok, df_acuan]:
         if not df_check.empty:
             if 'BARCODE_KODE' not in df_check.columns:
@@ -59,17 +61,27 @@ try:
                 possible_l = [c for c in df_check.columns if 'LOKASI' in c or 'AREA' in c]
                 if possible_l: df_check.rename(columns={possible_l[0]: 'LOKASI'}, inplace=True)
 
-    # Agregasi Global (Sebaran Lokasi per Barcode)
+    # --- PENGUNCI URUTAN (SEQUENCE) ---
     if not df_audit.empty:
+        df_order = df_audit.reset_index().groupby('BARCODE_KODE')['index'].min().reset_index()
+        df_order.rename(columns={'index': 'SEQ_ORDER'}, inplace=True)
+        
         df_sebaran = df_audit.groupby('BARCODE_KODE')['LOKASI'].apply(lambda x: ', '.join(sorted(set(x.astype(str))))).reset_index()
         df_sebaran.rename(columns={'LOKASI': 'SEBARAN_LOKASI'}, inplace=True)
     else:
+        df_order = pd.DataFrame(columns=['BARCODE_KODE', 'SEQ_ORDER'])
         df_sebaran = pd.DataFrame(columns=['BARCODE_KODE', 'SEBARAN_LOKASI'])
 
     # DEFINISI TAB
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "📊 Executive", "📋 Monitoring", "🔍 Audit Compare", "🚀 Progres & Apps", "🔍 Detail Barang", "📈 Track Live"
     ])
+
+    # Tombol Refresh Cache Manual jika data di Google Sheet berubah drastis
+    with st.sidebar:
+        if st.button("🔄 Clear Cache & Refresh Data"):
+            st.cache_data.clear()
+            st.rerun()
 
     # --- TAB 1: EXECUTIVE ---
     with tab1:
@@ -103,9 +115,7 @@ try:
                             <span class="status-box {'done' if p2_s=='DONE' else 'empty'}">P2: {p2_s}</span>
                             <span class="status-box {'done' if p3_s=='DONE' else 'none'}">P3: {p3_s}</span>
                         </div>
-                        <div style="flex: 2; text-align: right; font-size: 13px;">
-                            📦 <b>{total_items}</b> SKU
-                        </div>
+                        <div style="flex: 2; text-align: right; font-size: 13px;">📦 <b>{total_items}</b> SKU</div>
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -138,10 +148,13 @@ try:
                 for p in ['P1', 'P2', 'P3']:
                     if p not in df_pivot.columns: df_pivot[p] = 0
 
-                df_final = pd.merge(df_pivot, df_petugas_agg, on='BARCODE_KODE', how='left')
+                df_final = pd.merge(df_pivot, df_order, on='BARCODE_KODE', how='left')
+                df_final = pd.merge(df_final, df_petugas_agg, on='BARCODE_KODE', how='left')
                 df_final = pd.merge(df_final, df_sebaran, on='BARCODE_KODE', how='left')
                 df_final = pd.merge(df_final, df_stok[['BARCODE_KODE', 'ITEM_UNIT', 'BALANCE_QTY', 'BUYING_PRICE']], 
                                    on='BARCODE_KODE', how='left').fillna(0)
+
+                df_final = df_final.sort_values(by='SEQ_ORDER')
 
                 df_final['FISIK_FINAL'] = df_final.apply(lambda r: r['P3'] if r['P3'] > 0 else (r['P2'] if r['P2'] > 0 else r['P1']), axis=1)
                 df_final['QTY_SELISIH'] = df_final['FISIK_FINAL'] - df_final['BALANCE_QTY']
@@ -167,7 +180,7 @@ try:
         else:
             st.info("Pilih lokasi di Tab Monitoring.")
 
-    # --- TAB 4: NAVIGATION ---
+    # --- TAB 4, 5, 6 ---
     with tab4:
         st.header("🔗 Navigation & Apps")
         c1, c2 = st.columns(2)
@@ -178,7 +191,6 @@ try:
             st.link_button("🔍 Unlisting Product", "https://grandmitra.github.io/unlisting/", use_container_width=True)
             st.link_button("🚚 Anterinlah App", "https://anterinlah.web.app/", use_container_width=True)
 
-    # --- TAB 5: GLOBAL SEARCH ---
     with tab5:
         st.subheader("🔍 Global Search Item")
         query = st.text_input("Barcode/Nama:")
@@ -186,46 +198,29 @@ try:
             match = df_audit[(df_audit['DESKRIPSI'].astype(str).str.contains(query, case=False)) | (df_audit['BARCODE_KODE'].astype(str).str.contains(query))]
             st.dataframe(match, use_container_width=True)
 
-    # --- TAB 6: TRACK LIVE (DENGAN ACUAN MASTER LOKASI) ---
     with tab6:
-        st.subheader("🚀 Live Tracking Penyelesaian Lokasi")
-        
+        st.subheader("🚀 Live Tracking")
         if not df_acuan.empty:
-            # Mengambil Master Lokasi UNIK dari sheet acuan_stok_opname
             master_locs = set(df_acuan['LOKASI'].astype(str).str.strip().unique())
-            
-            # Mengambil Lokasi yang SUDAH di-input di database audit
-            if not df_audit.empty:
-                loc_done = set(df_audit['LOKASI'].astype(str).str.strip().unique())
-            else:
-                loc_done = set()
-            
+            loc_done = set(df_audit['LOKASI'].astype(str).str.strip().unique()) if not df_audit.empty else set()
             total_loc = len(master_locs)
             done_count = len(loc_done.intersection(master_locs))
             progress_pct = (done_count / total_loc) if total_loc > 0 else 0
             
-            # Tampilan Visual Metric
             c1, c2, c3 = st.columns([1, 1, 2])
-            c1.metric("Total Master Lokasi", f"{total_loc} Titik")
-            c2.metric("Lokasi Terisi", f"{done_count} Titik", delta=f"{done_count - total_loc}")
+            c1.metric("Total Master", f"{total_loc}")
+            c2.metric("Terisi", f"{done_count}")
             with c3:
-                st.write(f"**Progress Penyelesaian Area: {progress_pct:.1%}**")
+                st.write(f"**Progress: {progress_pct:.1%}**")
                 st.progress(progress_pct)
             
-            st.markdown("---")
-            
-            # Detail List Lokasi
             col_list1, col_list2 = st.columns(2)
             with col_list1:
-                st.write("### ✅ Area Selesai / Terisi")
+                st.write("### ✅ Terisi")
                 st.dataframe(pd.DataFrame(sorted(list(loc_done.intersection(master_locs))), columns=['LOKASI']), use_container_width=True)
-            
             with col_list2:
-                st.write("### ⏳ Area Belum Tersentuh")
-                pending_locs = sorted(list(master_locs - loc_done))
-                st.dataframe(pd.DataFrame(pending_locs, columns=['LOKASI']), use_container_width=True)
-        else:
-            st.warning("Sheet 'acuan_stok_opname' tidak ditemukan atau kosong.")
+                st.write("### ⏳ Belum")
+                st.dataframe(pd.DataFrame(sorted(list(master_locs - loc_done)), columns=['LOKASI']), use_container_width=True)
 
 except Exception as e:
     st.error(f"⚠️ Sistem Error: {e}")
