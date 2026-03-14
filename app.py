@@ -190,7 +190,7 @@ try:
         with c1:
             st.link_button("🚀 Progress 1 (P1)", "https://script.google.com/macros/s/AKfycbzy2LxYk5lZHDyLav1MD7RZj6bR8R2LGwHQRVQaftTgXI00iFMzX7jp-37iz-mra8GXKg/exec", use_container_width=True)
             st.link_button("🚀 Progress 2 (P2)", "https://script.google.com/macros/s/AKfycbxWEUlPuofOGeDgGaEo1qh9QP0vs9f5NZju0WwKnnT-y3jrRpUhuBghORQPNQQRw7Ef/exec", use_container_width=True)
-            st.link_button("📊 GMB Heatmap", "https://gmbheatmap.streamlit.app/", use_container_width=True)
+            st.link_button("📊 GMB Heatmap", "https://progresopname.streamlit.app/", use_container_width=True)
             st.link_button("✅ Verifikasi P3", "https://grandmitra.github.io/verifikasip3/", use_container_width=True)
             st.link_button("📝 Input SO", "https://grandmitra.github.io/inputso/", use_container_width=True)
 
